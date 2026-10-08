@@ -43,7 +43,7 @@ def build_naive_rag(s: Settings = default_settings) -> NaiveRAG:
         num_ctx=s.llm_num_ctx,
         reasoning=False,  # thinking mode off (SAD Table 9.1)
     )
-    return NaiveRAG(_embedder(s), _vector_store(s), llm, s.top_k)
+    return NaiveRAG(_embedder(s), _vector_store(s), llm, s.top_k, timeout_s=s.llm_timeout_s)
 
 
 def _embedder(s: Settings) -> Embeddings:

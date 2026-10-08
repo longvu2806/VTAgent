@@ -1,0 +1,24 @@
+# Settings for `python -m tests.eval.score`. Pass another file with --config to vary them,
+# or override metrics on the command line with --only / --skip.
+
+[params]
+k = 5                     # cut-off for recall_at_k and ndcg_at_k
+evidence_match = 0.8      # share of an evidence quote a chunk must contain (chunk cuts may split quotes)
+key_point_match = 0.6     # share of a key point's words the answer must contain
+group_by = ["category", "difficulty"]  # extra dataset columns to break scores down by
+max_failures = 20         # failing questions listed per metric in report.md
+# refusal_phrases = ["..."]  # default: the pipeline's fixed not-found answer
+
+[metrics]                 # false = not scored; metrics missing here are scored
+recall_at_k = true
+mrr = true
+ndcg_at_k = true
+refusal_accuracy = true
+false_refusal_rate = true
+key_point_coverage = true
+number_match = true
+citation_validity = true
+citation_precision = true
+citation_recall = true
+citation_f1 = true
+latency = true

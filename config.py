@@ -16,11 +16,14 @@ class Settings(BaseSettings):
     qdrant_url: str | None = None  # unset: embedded Qdrant under data_dir/qdrant
     collection: str = "vtagent_docs_r0"
 
-    # Models served by Ollama
-    ollama_base_url: str = "http://localhost:11434"
+    # Models served by Ollama.
+    # Use 127.0.0.1, not localhost: on Windows, localhost tries IPv6 first and adds ~2 s
+    # to every request to a server that listens on IPv4 only (Ollama, Qdrant in Docker).
+    ollama_base_url: str = "http://127.0.0.1:11434"
     llm_model: str = "qwen3.5:9b"
     llm_num_ctx: int = 8192  # Ollama's default context silently truncates prompts
     llm_temperature: float = 0.0
+    llm_timeout_s: float = 300  # stops an answer stuck in a repetition loop
     embedding_model: str = "bge-m3"
     tokenizer_name: str = "BAAI/bge-m3"  # must match embedding_model
 

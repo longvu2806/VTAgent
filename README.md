@@ -36,11 +36,115 @@ The first run downloads the bge-m3 tokenizer from Hugging Face. After that, set
 
 ## Usage
 
+Run every command from the repository root with the virtual environment
+activated (`.venv\Scripts\activate`). Make sure Ollama is running first.
+Settings come from `.env` (see `.env.example`); the effective settings are
+logged at the start of every run.
+
+### 1. Ingest documents
+
 ```bash
 python main.py ingest contract.docx appendix.pdf
+```
+
+Pass one or more files. Each file is parsed, split into 400-token chunks,
+embedded with bge-m3 and indexed in Qdrant. One line is printed per file:
+
+```
+indexed contract.docx → 648899d2d11bab78 (12 chunks)
+rejected: notes.txt: unsupported format '.txt' (PDF and DOCX only)
+rejected: scan.pdf: no text layer found (scanned document?)
+not found: missing.pdf
+```
+
+- **Formats:** PDF and DOCX with a text layer. Scanned PDFs and other formats
+  are rejected with the reason; the remaining files are still ingested.
+- **Re-ingesting is safe:** a file already indexed (same content) is skipped,
+  so you can re-run the same command after adding new files.
+- **Whole folder:** PowerShell does not expand `*` for Python, so pass the files
+  explicitly:
+
+  ```powershell
+  python main.py ingest (Get-ChildItem docs\*.pdf, docs\*.docx).FullName
+  ```
+
+- **Where data goes:** `data/files/` keeps a copy of each original (for checking
+  citations), `data/qdrant/` holds the index, `data/vtagent.db` lists the
+  indexed documents.
+- **Start over:** delete the `data/` folder and ingest again.
+- **Changed chunking settings?** Also change `VTAGENT_COLLECTION` (e.g.
+  `vtagent_docs_r0_300`). Documents are tracked per collection, so files already
+  indexed with the old settings would otherwise be skipped.
+
+### 2. Ask questions
+
+```bash
 python main.py ask "Mức phạt chậm giao hàng là bao nhiêu?"
+```
+
+Quote the question. The system retrieves the 5 most similar chunks, and
+qwen3.5:9b answers from them only. Each sentence ends with a source label, and
+a table maps every label to its file, page and text so you can check it:
+
+```
+Mức phạt là 0,05% giá trị phần nghĩa vụ bị vi phạm cho mỗi ngày chậm,
+tối đa 8% [S1].
+
+┌───────┬───────────────┬──────┬──────────────────────────────────┐
+│ Label │ Source        │ Page │ Text                             │
+├───────┼───────────────┼──────┼──────────────────────────────────┤
+│ S1    │ contract.docx │ –    │ Điều 5. Phạt vi phạm. Trường hợp…│
+└───────┴───────────────┴──────┴──────────────────────────────────┘
+```
+
+- Page shows `–` for DOCX files, which have no pages.
+- If the documents do not contain the answer, the reply is exactly
+  *"Không tìm thấy thông tin này trong tài liệu đã nạp."* and no table is shown.
+- Expect about 10–30 s per question on the reference laptop; the first question
+  after starting Ollama is slower because the model has to load.
+- Each `ask` is independent: the R0 baseline has no conversation memory, so a
+  follow-up must repeat its context ("phạt *chậm giao hàng* tối đa bao nhiêu?",
+  not "tối đa bao nhiêu?").
+
+### 3. Run the tests
+
+```bash
 python -m pytest
 ```
 
-Supported formats: PDF and DOCX with a text layer. Scanned PDFs are rejected.
-Data (original files, Qdrant index, SQLite registry) is stored under `data/`.
+The unit tests run offline with fake models; Ollama is not needed.
+
+### 4. Evaluate
+
+Evaluation runs in two phases, so answers are generated once and scored as often as
+needed.
+
+```bash
+# Phase 1: ask every question; needs Ollama and Qdrant (about 35 s per question)
+python -m tests.eval.generate data/test/luat_gtdb_2008_eval100.csv --name r0
+python -m tests.eval.generate data/test/luat_gtdb_2008_eval100.csv --name r0_dev --limit 10
+
+# Phase 2: compute metrics and write a report; needs no models
+python -m tests.eval.score data/eval_runs/r0
+python -m tests.eval.score data/eval_runs/r0 --skip latency,mrr
+python -m tests.eval.score data/eval_runs/r0 --only recall_at_k,refusal_accuracy
+```
+
+- **Dataset format:** a CSV with the columns documented in `tests/eval/dataset.py`.
+  Only `id` and `question` are required; metrics that need a missing column are
+  skipped and the report says why. Documents named in the `doc` column (next to the
+  CSV) are ingested before the first question.
+- **Phase 1 output** in `data/eval_runs/<name>/`: `results_<time>.csv` (open in Excel:
+  answers, citations, retrieved pages, total latency and latency per stage, token
+  counts) and `records_<time>.jsonl` (full chunk texts, read by phase 2). `<time>` is
+  when the run was created (`YYYYMMDD-HHMMSS`); resuming keeps the same files.
+- **Interrupted?** Rerun the same command: answered questions are skipped and failed
+  ones retried. Changing settings in `.env` requires a new `--name`, so one run never
+  mixes two configurations.
+- **Time limit:** an answer still generating after `VTAGENT_LLM_TIMEOUT_S` (300 s) is
+  stopped (the model sometimes loops). It is kept as far as it got, marked `timed_out`,
+  scored like any answer and listed in the report; it is not retried.
+- **Phase 2 output:** `report_<time>.md`, a new one per scoring, with the summary, latency per stage, scores per
+  category and difficulty, and the failing questions. Turn metrics on and off in
+  `tests/eval/score.toml` or with `--only` / `--skip`. The dataset is re-read, so a
+  corrected dataset is scored without regenerating answers.

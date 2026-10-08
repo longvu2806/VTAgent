@@ -23,10 +23,13 @@ def setup_logging(level: str = "INFO") -> None:
 
 
 @contextmanager
-def timed(stage: str) -> Iterator[None]:
-    """Log how long the enclosed block took."""
+def timed(stage: str, into: dict[str, float] | None = None) -> Iterator[None]:
+    """Log how long the enclosed block took; also store it in ``into[stage]`` if given."""
     start = time.perf_counter()
     try:
         yield
     finally:
-        log.info("%s: %.2fs", stage, time.perf_counter() - start)
+        elapsed = time.perf_counter() - start
+        if into is not None:
+            into[stage] = elapsed
+        log.info("%s: %.2fs", stage, elapsed)

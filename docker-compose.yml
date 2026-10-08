@@ -1,0 +1,13 @@
+# Qdrant server (SAD 4.1). Ollama stays native on Windows to keep iGPU acceleration.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.0  # keep the minor version in step with qdrant-client in requirements.txt
+    container_name: vtagent-qdrant
+    ports:
+      - "127.0.0.1:6333:6333"  # localhost only: Qdrant has no auth and holds confidential data
+    volumes:
+      - qdrant_storage:/qdrant/storage  # named volume: Windows bind mounts can corrupt Qdrant data
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:

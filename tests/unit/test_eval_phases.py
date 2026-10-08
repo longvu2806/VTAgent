@@ -1,0 +1,130 @@
+"""Generate then score, with a fake pipeline instead of the models."""
+
+import csv
+import re
+from pathlib import Path
+
+import pytest
+
+from core.models import Answer, Chunk, Citation, RetrievedChunk
+from core.prompting import NOT_FOUND
+from tests.eval.dataset import load_dataset
+from tests.eval.generate import prepare_run_dir, run
+from tests.eval.metrics import select_metrics, score_run
+from tests.eval.runs import read_records
+from tests.eval.score import render_markdown
+
+SETTINGS = {"llm_model": "fake", "embedding_model": "fake", "collection": "c", "chunk_size": 400,
+            "chunk_overlap": 50, "top_k": 5}
+RECORDS, RESULTS = "records.jsonl", "results.csv"
+
+
+@pytest.fixture
+def dataset(tmp_path):
+    path = tmp_path / "set.csv"
+    path.write_text(
+        "id,question,answerable,expected_answer,evidence,category\n"
+        "1,Phạt bao nhiêu?,yes,0.05%,phạt 0.05% mỗi ngày,numeric\n"
+        "2,Có trọng tài không?,no,,,trap\n",
+        encoding="utf-8",
+    )
+    return load_dataset(path)
+
+
+def _answer(question: str) -> Answer:
+    if question.startswith("Có"):
+        return Answer(NOT_FOUND, [], [], timings={"generate": 1.0}, timed_out=True)
+    chunk = Chunk("c1", "d", "law.pdf", 3, 0, "Bên A chịu phạt 0.05% mỗi ngày chậm.")
+    return Answer("Phạt 0.05% mỗi ngày [S1].", [Citation("S1", chunk)], [RetrievedChunk(chunk, 0.9)],
+                  timings={"embed_query": 0.1, "generate": 2.0}, tokens={"input_tokens": 900, "output_tokens": 20})
+
+
+def test_generate_writes_records_and_results_csv(tmp_path, dataset):
+    run(dataset.items, _answer, tmp_path / RECORDS, tmp_path / RESULTS)
+
+    records = read_records(tmp_path / RECORDS)
+    assert records["1"].contexts[0]["page"] == 3 and records["1"].citations == [{"label": "S1", "chunk_id": "c1"}]
+    with (tmp_path / RESULTS).open(encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["id"] for r in rows] == ["1", "2"]
+    assert rows[0]["citations"] == "S1: law.pdf p.3"
+    assert rows[0]["generate_s"] == "2.0" and rows[0]["input_tokens"] == "900"
+    assert {"latency_s", "embed_query_s"} <= set(rows[0])
+    assert (rows[0]["timed_out"], rows[1]["timed_out"]) == ("", "yes")
+
+
+def test_timed_out_question_is_kept_and_not_retried(tmp_path, dataset):
+    calls = []
+
+    def counting(question):
+        calls.append(question)
+        return _answer(question)
+
+    run(dataset.items, counting, tmp_path / RECORDS, tmp_path / RESULTS)
+    run(dataset.items, counting, tmp_path / RECORDS, tmp_path / RESULTS)
+
+    assert len(calls) == 2  # the timed-out answer is final, unlike an error
+    assert read_records(tmp_path / RECORDS)["2"].timed_out
+
+
+def test_generate_resumes_and_retries_failed_questions(tmp_path, dataset):
+    calls = []
+
+    def flaky(question):
+        calls.append(question)
+        if len(calls) == 2:
+            raise ConnectionError("ollama down")
+        return _answer(question)
+
+    run(dataset.items, flaky, tmp_path / RECORDS, tmp_path / RESULTS)
+    assert read_records(tmp_path / RECORDS)["2"].error == "ConnectionError: ollama down"
+
+    run(dataset.items, flaky, tmp_path / RECORDS, tmp_path / RESULTS)  # only the failed question is asked again
+    assert len(calls) == 3
+    assert read_records(tmp_path / RECORDS)["2"].error is None
+
+
+def test_generate_stops_when_every_question_fails(tmp_path, dataset):
+    items = dataset.items * 3  # 6 questions
+    calls = []
+
+    def down(question):
+        calls.append(question)
+        raise ConnectionError("refused")
+
+    run([type(i)(f"{n}", i.question) for n, i in enumerate(items)], down, tmp_path / RECORDS, tmp_path / RESULTS)
+    assert len(calls) == 3
+
+
+def test_output_files_are_stamped_with_the_run_creation_time(tmp_path):
+    meta = prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)
+
+    assert re.fullmatch(r"records_\d{8}-\d{6}\.jsonl", meta["records"])
+    assert meta["results"] == meta["records"].replace("records_", "results_").replace(".jsonl", ".csv")
+    assert prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)["records"] == meta["records"]  # resume: same files
+
+
+def test_resuming_with_other_settings_is_refused(tmp_path):
+    prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)
+    prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)  # same settings: fine
+
+    with pytest.raises(SystemExit, match="top_k"):
+        prepare_run_dir(tmp_path, Path("set.csv"), {**SETTINGS, "top_k": 3})
+
+
+def test_score_report_end_to_end(tmp_path, dataset):
+    prepare_run_dir(tmp_path, dataset.path, SETTINGS)
+    run(dataset.items, _answer, tmp_path / RECORDS, tmp_path / RESULTS)
+    records = read_records(tmp_path / RECORDS)
+    enabled = select_metrics({"key_point_coverage": False}, [], [])
+
+    report = score_run(dataset, records, enabled, {"group_by": ["category"]})
+    markdown = render_markdown(report, dataset, records, {"settings": SETTINGS}, tmp_path, enabled, {"k": 5})
+
+    assert report.summary["recall_at_k"]["value"] == 1.0
+    assert report.summary["refusal_accuracy"]["value"] == 1.0
+    assert "| number_match | skipped | – | dataset has no key_points column |" in markdown
+    assert "Disabled: `key_point_coverage`" in markdown
+    assert "## Latency (seconds)" in markdown and "| generate |" in markdown
+    assert "## By category" in markdown
+    assert report.timed_out == ["2"] and "### timed out: 1 questions" in markdown
