@@ -1,10 +1,11 @@
-"""Eval phase 2 — score a generated run and write report_<stamp>.md. Needs no models.
+"""Eval phase 2 — score a generated run and write report_<stamp>.md.
 
     python -m tests.eval.score data/eval_runs/<run> [--config tests/eval/score.toml]
-                                                   [--only recall_at_k,mrr] [--skip latency]
+                                                   [--only recall_at_k,mrr] [--skip ragas,latency]
 
-The dataset is re-read at scoring time, so a corrected dataset is scored without
-regenerating the answers.
+Code metrics need no models. The RAGAS metrics need the judge API (key in .env) and the
+local Ollama for embeddings; `--skip ragas` turns them all off. The dataset is re-read at
+scoring time, so a corrected dataset is scored without regenerating the answers.
 """
 
 import argparse
@@ -15,9 +16,11 @@ from pathlib import Path
 
 from rich.table import Table
 
+from config import settings
 from observability import console, setup_logging
 from tests.eval.dataset import Dataset, load_dataset
-from tests.eval.metrics import DEFAULT_PARAMS, LATENCY, METRICS, Report, score_run, select_metrics
+from tests.eval.metrics import (DEFAULT_PARAMS, JUDGE_METRICS, LATENCY, METRICS, Report, score_run,
+                                select_metrics)
 from tests.eval.runs import RunRecord, read_records, stamp
 
 DEFAULT_CONFIG = Path(__file__).with_name("score.toml")
@@ -42,15 +45,54 @@ def main() -> None:
     console.print(f"records → {records_path}")
     records = read_records(records_path)
 
-    report = score_run(dataset, records, enabled, params)
+    judged, unavailable, judge_line = _judge(enabled, config, dataset, records, params, args.run_dir)
+    report = score_run(dataset, records, enabled, params, judged, unavailable)
     _print_summary(report)
     path = args.run_dir / f"report_{stamp()}.md"
-    path.write_text(render_markdown(report, dataset, records, meta, args.run_dir, enabled, params), encoding="utf-8")
+    markdown = render_markdown(report, dataset, records, meta, args.run_dir, enabled, params, judge_line)
+    path.write_text(markdown, encoding="utf-8")
     console.print(f"[green]report[/] → {path}")
 
 
+def _judge(enabled: list[str], config: dict, dataset: Dataset, records: dict[str, RunRecord], params: dict,
+           run_dir: Path) -> tuple[dict, dict[str, str], str | None]:
+    """Judge scores of the enabled RAGAS metrics, metrics that cannot run (with why), and a
+    one-line description of the judge for the report."""
+    wanted = [m for m in enabled if m in JUDGE_METRICS]
+    if not wanted:
+        return {}, {}, None
+    from tests.eval.ragas_judge import DEFAULT_JUDGE, EMBEDDING_ONLY, build_scorer, cache_tag, is_openrouter, judge
+
+    cfg = {**DEFAULT_JUDGE, **config.get("judge", {})}
+    key = settings.judge_api_key.get_secret_value() if settings.judge_api_key else ""
+    unavailable = {}
+    if not key:
+        reason = "no judge API key: set VTAGENT_JUDGE_API_KEY in .env"
+        unavailable = {m: reason for m in wanted if m not in EMBEDDING_ONLY}
+        wanted = [m for m in wanted if m in EMBEDDING_ONLY]
+        if not wanted:
+            return {}, unavailable, None
+
+    scorer = build_scorer(cfg, wanted, settings.judge_base_url, key or None,
+                          settings.ollama_base_url, settings.embedding_model)
+    judged, failures = judge(dataset.items, records, wanted, scorer, run_dir / "judge_cache.jsonl",
+                             cache_tag(cfg), {**DEFAULT_PARAMS, **params}, cfg["max_concurrency"])
+    line = f"{settings.embedding_model} embeddings (local)"
+    if key:
+        if is_openrouter(settings.judge_base_url):
+            options = f" · reasoning {'on' if cfg['reasoning'] else 'off'}"
+            options += f" · providers {', '.join(cfg['providers'])}" if cfg["providers"] else ""
+        else:
+            options = f" · extra_body {json.dumps(cfg['extra_body'])}" if cfg["extra_body"] else ""
+        line = f"{cfg['model']} via {settings.judge_base_url} · temperature {cfg['temperature']}{options} · {line}"
+    if failures:
+        console.print(f"[yellow]{failures} judge calls failed; rescore to retry them[/]")
+        line += f" · {failures} failed calls (not scored)"
+    return judged, unavailable, line
+
+
 def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunRecord], meta: dict,
-                    run_dir: Path, enabled: list[str], params: dict) -> str:
+                    run_dir: Path, enabled: list[str], params: dict, judge_line: str | None = None) -> str:
     params = {**DEFAULT_PARAMS, **params}
     s = meta["settings"]
     n_unanswerable = sum(not i.answerable for i in dataset.items)
@@ -68,6 +110,7 @@ def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunReco
         f"| Scored | {datetime.now(timezone.utc).isoformat(timespec='seconds')} |",
         f"| Models | {s['llm_model']} · {s['embedding_model']} |",
         f"| Retrieval | collection `{s['collection']}` · chunk {s['chunk_size']}/{s['chunk_overlap']} tokens · top-{s['top_k']} |",
+        *([f"| Judge | {judge_line} |"] if judge_line else []),
         "",
         "Full settings are in `meta.json`.",
         "",

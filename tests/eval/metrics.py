@@ -1,7 +1,10 @@
 """Eval metrics. A metric scores one question (None = not applicable) and the scores are
 averaged. To add one, write its scoring function and register it in METRICS.
 
+Code metrics are computed here. Judge metrics (``fn=None``) are scored by an LLM judge
+through RAGAS in ``ragas_judge.py`` and handed to ``score_run`` as precomputed scores.
 Latency is not a per-question metric; it is summarised separately and toggled as "latency".
+Specification: METRICS.md.
 """
 
 import math
@@ -18,19 +21,21 @@ from tests.eval.runs import RunRecord
 DEFAULT_PARAMS = {
     "k": 5,  # cut-off for recall_at_k and ndcg_at_k
     "evidence_match": 0.8,  # share of an evidence quote a chunk must contain (chunk cuts may split quotes)
-    "key_point_match": 0.6,  # share of a key point's words the answer must contain
     "refusal_phrases": [NOT_FOUND],
     "group_by": [],  # extra dataset columns to break scores down by
     "max_failures": 20,  # failing questions listed per metric in the report
 }
 LATENCY = "latency"
+JUDGE_METRICS = ("context_precision", "context_recall", "faithfulness", "answer_relevancy",
+                 "factual_correctness", "semantic_similarity")
+GROUPS = {"ragas": JUDGE_METRICS}  # names that stand for several metrics in --only / --skip
 
 
 @dataclass(frozen=True)
 class Metric:
     name: str
     description: str
-    fn: Callable[[EvalItem, RunRecord, dict], float | None]
+    fn: Callable[[EvalItem, RunRecord, dict], float | None] | None  # None: scored by the LLM judge
     needs: tuple[str, ...] = ()  # dataset columns the metric requires
     failed: Callable[[float], bool] | None = None  # scores the report lists as failures
 
@@ -74,10 +79,16 @@ def _quotes_found(texts: list[str], item: EvalItem, p: dict) -> float:
     return found / len(item.evidence)
 
 
-def _is_refusal(answer: str, p: dict) -> bool:
+def is_refusal(answer: str, p: dict) -> bool:
     """The answer leads with a refusal phrase; one that only ends with it answered first."""
     answer = _norm(answer)
     return any(answer.startswith(_norm(phrase).rstrip(".")) for phrase in p["refusal_phrases"])
+
+
+def strip_labels(answer: str) -> str:
+    """The answer without its [S#] citation labels."""
+    text = re.sub(r"[ \t]+", " ", _LABEL_GROUP.sub("", answer))
+    return re.sub(r" ([.,;:!?])", r"\1", text).strip()
 
 
 _LABEL_GROUP = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")
@@ -93,10 +104,6 @@ def _numbers(text: str) -> set[str]:
     """Numbers stated in the text, ignoring article references; "3.500" → "3500", "0,25" → "0.25"."""
     text = _LEGAL_REF.sub(" ", _norm(text))
     return {re.sub(r"\.(?=\d{3}\b)", "", n).replace(",", ".") for n in _NUMBER.findall(text)}
-
-
-def _words(text: str) -> list[str]:
-    return re.findall(r"\w+", _norm(text))
 
 
 def _cited_texts(rec: RunRecord) -> list[str]:
@@ -126,28 +133,18 @@ def ndcg_at_k(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
         return None
     relevant = [_relevant(c["text"], item, p) for c in rec.contexts[: p["k"]]]
     dcg = sum(1 / math.log2(i + 2) for i, r in enumerate(relevant) if r)
-    ideal_hits = min(p["k"], max(len(item.evidence), sum(relevant)))
-    return dcg / sum(1 / math.log2(i + 2) for i in range(ideal_hits))
+    # Ideal ranking of the retrieved chunks: all relevant ones first. Missing evidence is
+    # recall_at_k's job, so one chunk holding several quotes is not penalised.
+    idcg = sum(1 / math.log2(i + 2) for i in range(sum(relevant)))
+    return dcg / idcg if idcg else 0.0
 
 
 def refusal_accuracy(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
-    return None if item.answerable else float(_is_refusal(rec.answer, p))
+    return None if item.answerable else float(is_refusal(rec.answer, p))
 
 
 def false_refusal_rate(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
-    return float(_is_refusal(rec.answer, p)) if item.answerable else None
-
-
-def key_point_coverage(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
-    if not item.answerable or not item.key_points:
-        return None
-    answer = set(_words(rec.answer))
-
-    def covered(point: str) -> bool:
-        words = _words(point)
-        return bool(words) and sum(w in answer for w in words) / len(words) >= p["key_point_match"]
-
-    return sum(map(covered, item.key_points)) / len(item.key_points)
+    return float(is_refusal(rec.answer, p)) if item.answerable else None
 
 
 def number_match(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
@@ -185,41 +182,71 @@ def citation_f1(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
     return 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
 
 
+def timeout_rate(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
+    return float(rec.timed_out)
+
+
 METRICS = {m.name: m for m in [
+    # Retrieval
     Metric("recall_at_k", "Share of evidence quotes found in the top-k retrieved chunks",
            recall_at_k, ("evidence",), failed=lambda v: v == 0),
     Metric("mrr", "1 / rank of the first retrieved chunk that contains evidence", mrr, ("evidence",)),
-    Metric("ndcg_at_k", "Rank-weighted share of top-k chunks that contain evidence", ndcg_at_k, ("evidence",)),
+    Metric("ndcg_at_k", "Rank-weighted order of the relevant chunks among the top-k", ndcg_at_k, ("evidence",)),
+    Metric("context_precision", "Judge: useful chunks are ranked above useless ones", None, ("expected_answer",)),
+    Metric("context_recall", "Judge: claims of the reference answer supported by the chunks",
+           None, ("expected_answer",)),
+    # Answer correctness
+    Metric("factual_correctness", "Judge: claim-level F1 of the answer against the reference answer",
+           None, ("expected_answer",), failed=lambda v: v == 0),
+    Metric("semantic_similarity", "Embedding cosine similarity of answer and reference answer",
+           None, ("expected_answer",)),
+    Metric("number_match", "Share of numbers in the key points that appear in the answer",
+           number_match, ("key_points",), failed=lambda v: v < 1),
+    # Grounding and citation
+    Metric("faithfulness", "Judge: claims of the answer supported by the retrieved chunks",
+           None, failed=lambda v: v < 0.5),
+    Metric("citation_f1", "Harmonic mean of citation precision and recall", citation_f1, ("evidence",)),
+    Metric("citation_precision", "Share of cited chunks that contain evidence", citation_precision, ("evidence",)),
+    Metric("citation_recall", "Share of evidence quotes covered by the cited chunks", citation_recall, ("evidence",)),
+    Metric("citation_validity", "Share of [S#] labels that point to a retrieved chunk",
+           citation_validity, failed=lambda v: v < 1),
+    # Relevance
+    Metric("answer_relevancy", "Judge: the answer addresses the question (0 if evasive)", None),
+    # Abstention
     Metric("refusal_accuracy", "Unanswerable questions the system refused",
            refusal_accuracy, ("answerable",), failed=lambda v: v == 0),
     Metric("false_refusal_rate", "Answerable questions the system refused (lower is better)",
            false_refusal_rate, failed=lambda v: v == 1),
-    Metric("key_point_coverage", "Share of key points whose words appear in the answer (lexical)",
-           key_point_coverage, ("key_points",)),
-    Metric("number_match", "Share of numbers in the key points that appear in the answer",
-           number_match, ("key_points",), failed=lambda v: v < 1),
-    Metric("citation_validity", "Share of [S#] labels that point to a retrieved chunk",
-           citation_validity, failed=lambda v: v < 1),
-    Metric("citation_precision", "Share of cited chunks that contain evidence", citation_precision, ("evidence",)),
-    Metric("citation_recall", "Share of evidence quotes covered by the cited chunks", citation_recall, ("evidence",)),
-    Metric("citation_f1", "Harmonic mean of citation precision and recall", citation_f1, ("evidence",)),
+    # System
+    Metric("timeout_rate", "Answers cut at the LLM time limit", timeout_rate),
 ]}
 
 
 # --- scoring -----------------------------------------------------------------------
 
 def select_metrics(toggles: dict[str, bool], only: list[str], skip: list[str]) -> list[str]:
-    """Metrics to score: ``only`` if given, else all not switched off; minus ``skip``."""
+    """Metrics to score: ``only`` if given, else all not switched off; minus ``skip``.
+    ``only`` and ``skip`` also accept group names (``ragas``)."""
     known = [*METRICS, LATENCY]
-    unknown = sorted((set(toggles) | set(only) | set(skip)) - set(known))
+    unknown = sorted((set(toggles) | set(only) | set(skip)) - set(known) - set(GROUPS))
     if unknown:
-        raise ValueError(f"unknown metric(s) {unknown}; known: {known}")
-    chosen = only or [name for name in known if toggles.get(name, True)]
+        raise ValueError(f"unknown metric(s) {unknown}; known: {known} and groups {list(GROUPS)}")
+
+    def expand(names: list[str]) -> list[str]:
+        return [m for n in names for m in GROUPS.get(n, (n,))]
+
+    only, skip = expand(only), expand(skip)
+    chosen = [n for n in known if n in only] if only else [n for n in known if toggles.get(n, True)]
     return [name for name in chosen if name not in skip]
 
 
-def score_run(dataset: Dataset, records: dict[str, RunRecord], enabled: list[str], params: dict) -> Report:
+def score_run(dataset: Dataset, records: dict[str, RunRecord], enabled: list[str], params: dict,
+              judged: dict[str, dict[str, float | None]] | None = None,
+              unavailable: dict[str, str] | None = None) -> Report:
+    """Score a run. ``judged`` holds the judge metrics' per-question scores; metrics named in
+    ``unavailable`` are reported as skipped with the given reason."""
     p = {**DEFAULT_PARAMS, **params}
+    judged, unavailable = judged or {}, unavailable or {}
     active, skipped = [], {}
     for name in enabled:
         if name == LATENCY:
@@ -228,11 +255,18 @@ def score_run(dataset: Dataset, records: dict[str, RunRecord], enabled: list[str
         absent = [c for c in metric.needs if c not in dataset.columns]
         if absent:
             skipped[name] = {"skipped": f"dataset has no {', '.join(absent)} column"}
+        elif name in unavailable:
+            skipped[name] = {"skipped": unavailable[name]}
         else:
             active.append(metric)
 
+    def score(metric: Metric, item: EvalItem, rec: RunRecord) -> float | None:
+        if metric.fn is None:
+            return judged.get(item.id, {}).get(metric.name)
+        return metric.fn(item, rec, p)
+
     answered = [(i, records[i.id]) for i in dataset.items if i.id in records and records[i.id].error is None]
-    item_scores = {item.id: {m.name: m.fn(item, rec, p) for m in active} for item, rec in answered}
+    item_scores = {item.id: {m.name: score(m, item, rec) for m in active} for item, rec in answered}
 
     def aggregate(ids: list[str]) -> dict[str, dict]:
         out = {}

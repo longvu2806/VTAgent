@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,5 +33,12 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50  # tokens
     top_k: int = 5
 
+    # LLM judge of the eval's RAGAS metrics (any OpenAI-compatible API). Used only by
+    # tests/eval/score.py; the judge model is chosen in tests/eval/score.toml.
+    judge_base_url: str = "https://openrouter.ai/api/v1"
+    judge_api_key: SecretStr | None = None  # secret: set it in .env, which is git-ignored
+
+
+JUDGE_SETTINGS = {"judge_base_url", "judge_api_key"}  # do not affect generated answers
 
 settings = Settings()

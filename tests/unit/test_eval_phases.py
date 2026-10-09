@@ -116,7 +116,7 @@ def test_score_report_end_to_end(tmp_path, dataset):
     prepare_run_dir(tmp_path, dataset.path, SETTINGS)
     run(dataset.items, _answer, tmp_path / RECORDS, tmp_path / RESULTS)
     records = read_records(tmp_path / RECORDS)
-    enabled = select_metrics({"key_point_coverage": False}, [], [])
+    enabled = select_metrics({"mrr": False}, [], ["ragas"])
 
     report = score_run(dataset, records, enabled, {"group_by": ["category"]})
     markdown = render_markdown(report, dataset, records, {"settings": SETTINGS}, tmp_path, enabled, {"k": 5})
@@ -124,7 +124,7 @@ def test_score_report_end_to_end(tmp_path, dataset):
     assert report.summary["recall_at_k"]["value"] == 1.0
     assert report.summary["refusal_accuracy"]["value"] == 1.0
     assert "| number_match | skipped | – | dataset has no key_points column |" in markdown
-    assert "Disabled: `key_point_coverage`" in markdown
+    assert "Disabled: `mrr`, `context_precision`" in markdown
     assert "## Latency (seconds)" in markdown and "| generate |" in markdown
     assert "## By category" in markdown
     assert report.timed_out == ["2"] and "### timed out: 1 questions" in markdown

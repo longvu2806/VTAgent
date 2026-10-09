@@ -124,11 +124,15 @@ needed.
 python -m tests.eval.generate data/test/luat_gtdb_2008_eval100.csv --name r0
 python -m tests.eval.generate data/test/luat_gtdb_2008_eval100.csv --name r0_dev --limit 10
 
-# Phase 2: compute metrics and write a report; needs no models
-python -m tests.eval.score data/eval_runs/r0
+# Phase 2: compute metrics and write a report
+python -m tests.eval.score data/eval_runs/r0                    # all metrics, RAGAS included
+python -m tests.eval.score data/eval_runs/r0 --skip ragas       # code metrics only: free, offline
 python -m tests.eval.score data/eval_runs/r0 --skip latency,mrr
-python -m tests.eval.score data/eval_runs/r0 --only recall_at_k,refusal_accuracy
+python -m tests.eval.score data/eval_runs/r0 --only faithfulness,factual_correctness
 ```
+
+The metrics, how each is computed and which are primary are specified in
+[tests/eval/METRICS.md](tests/eval/METRICS.md).
 
 - **Dataset format:** a CSV with the columns documented in `tests/eval/dataset.py`.
   Only `id` and `question` are required; metrics that need a missing column are
@@ -144,7 +148,21 @@ python -m tests.eval.score data/eval_runs/r0 --only recall_at_k,refusal_accuracy
 - **Time limit:** an answer still generating after `VTAGENT_LLM_TIMEOUT_S` (300 s) is
   stopped (the model sometimes loops). It is kept as far as it got, marked `timed_out`,
   scored like any answer and listed in the report; it is not retried.
-- **Phase 2 output:** `report_<time>.md`, a new one per scoring, with the summary, latency per stage, scores per
-  category and difficulty, and the failing questions. Turn metrics on and off in
-  `tests/eval/score.toml` or with `--only` / `--skip`. The dataset is re-read, so a
-  corrected dataset is scored without regenerating answers.
+- **Phase 2 output:** `report_<time>.md`, a new one per scoring, with the summary,
+  latency per stage, scores per category and difficulty, and the failing questions.
+  Turn metrics on and off in `tests/eval/score.toml` or with `--only` / `--skip`. The
+  dataset is re-read, so a corrected dataset is scored without regenerating answers.
+- **RAGAS metrics** (`context_precision`, `context_recall`, `faithfulness`,
+  `answer_relevancy`, `factual_correctness`, `semantic_similarity`) use an LLM judge
+  through any OpenAI-compatible API (DeepSeek directly, or OpenRouter) and bge-m3 on
+  the local Ollama:
+  1. In `.env`, set `VTAGENT_JUDGE_BASE_URL` (`https://api.deepseek.com` or
+     `https://openrouter.ai/api/v1`) and `VTAGENT_JUDGE_API_KEY` (`.env` is git-ignored;
+     never commit the key).
+  2. Choose the judge model in `[judge]` of `tests/eval/score.toml` (`deepseek-v4-flash`
+     on DeepSeek, `deepseek/deepseek-v4-flash` on OpenRouter).
+  3. Start Ollama, then score. Without a key, the judge metrics are reported as skipped.
+
+  One scoring of 80 answerable questions costs about $0.3–0.6. Verdicts are cached in
+  the run directory (`judge_cache.jsonl`), so rescoring is free. The eval dataset is
+  public law text; the judge is used only for evaluation, never in the running system.

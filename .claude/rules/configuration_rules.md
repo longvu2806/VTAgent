@@ -18,7 +18,10 @@
   result can be traced back to the exact configuration.
 - Secrets (e.g. the API key of the offline eval judge) come only from environment
   variables — never from code or committed files.
-- Exception: scoring settings (enabled metrics, thresholds) live in
+- Exception: scoring settings (enabled metrics, thresholds, judge model) live in
   `tests/eval/score.toml`. They describe how a run is measured, not how the system
   behaves, so they stay out of `Settings`. Eval datasets follow the fixed schema
   documented in `tests/eval/dataset.py`.
+- The judge connection (`judge_base_url`, `judge_api_key` as `SecretStr`) is in
+  `Settings` so the key can sit in `.env`. It is listed in `config.JUDGE_SETTINGS` and
+  excluded from a run's `meta.json`: the judge does not change generated answers.

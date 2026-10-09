@@ -18,7 +18,7 @@ from pathlib import Path
 
 from rich.progress import Progress
 
-from config import settings
+from config import JUDGE_SETTINGS, settings
 from core.agent_factory import build_ingestor, build_naive_rag
 from core.models import Answer
 from observability import console, log, setup_logging
@@ -39,7 +39,7 @@ def main() -> None:
     log.info("settings: %s", settings.model_dump_json())
     dataset = load_dataset(args.dataset)
     run_dir = settings.data_dir / "eval_runs" / (args.name or f"{settings.collection}__{args.dataset.stem}")
-    meta = prepare_run_dir(run_dir, args.dataset, settings.model_dump(mode="json"))
+    meta = prepare_run_dir(run_dir, args.dataset, settings.model_dump(mode="json", exclude=JUDGE_SETTINGS))
     records, results = run_dir / meta["records"], run_dir / meta["results"]
     log.info("records → %s", records)
     log.info("results → %s", results)

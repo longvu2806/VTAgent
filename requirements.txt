@@ -1,5 +1,5 @@
 langchain==1.4.3
-langchain-core==1.6.6
+langchain-core==1.6.9
 langchain-ollama==1.1.0
 pydantic-settings==2.15.0
 pymupdf==1.28.2
@@ -9,3 +9,10 @@ python-docx==1.2.0
 qdrant-client==1.19.1
 rich==15.0.0
 tokenizers==0.23.2
+
+# Eval judge (tests/eval/ragas_judge.py)
+ragas==0.4.3
+openai==3.3.0
+langchain-openai==1.7.0
+# ragas 0.4.3 imports langchain_community.chat_models.vertexai, removed in 0.4.2
+langchain-community==0.4.1

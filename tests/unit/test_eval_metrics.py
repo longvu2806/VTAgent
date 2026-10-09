@@ -4,7 +4,7 @@ import pytest
 
 from core.prompting import NOT_FOUND
 from tests.eval.dataset import Dataset, EvalItem
-from tests.eval.metrics import score_run, select_metrics
+from tests.eval.metrics import JUDGE_METRICS, score_run, select_metrics
 from tests.eval.runs import RunRecord
 
 QUOTE = "Người đủ 24 tuổi trở lên được lái xe ô tô chở người từ 10 đến 30 chỗ ngồi"
@@ -15,9 +15,9 @@ def _ctx(chunk_id: str, text: str, page: int = 1) -> dict:
     return {"chunk_id": chunk_id, "text": text, "page": page, "source": "law.pdf", "rank": 0, "score": 0.5}
 
 
-def _score(items, records, enabled, columns=ALL_COLUMNS, **params):
+def _score(items, records, enabled, columns=ALL_COLUMNS, judged=None, unavailable=None, **params):
     dataset = Dataset(Path("set.csv"), frozenset(columns), list(items))
-    return score_run(dataset, {r.id: r for r in records}, enabled, params)
+    return score_run(dataset, {r.id: r for r in records}, enabled, params, judged, unavailable)
 
 
 def _value(report, name):
@@ -36,6 +36,14 @@ def test_retrieval_metrics_find_evidence_despite_markdown_and_line_breaks():
     assert _value(report, "ndcg_at_k") == pytest.approx(0.631, abs=1e-3)
 
     assert _value(_score([item], [record], ["recall_at_k"], k=1), "recall_at_k") == 0.0
+
+
+def test_ndcg_does_not_penalise_one_chunk_holding_several_quotes():
+    item = EvalItem("1", "Q?", evidence=["phạt 0,05% mỗi ngày", "tối đa 8% giá trị"])
+    record = RunRecord("1", "Q?", contexts=[_ctx("a", "Bên B chịu phạt 0,05% mỗi ngày, tối đa 8% giá trị."),
+                                            _ctx("b", "nhiễu")])
+
+    assert _value(_score([item], [record], ["ndcg_at_k"]), "ndcg_at_k") == 1.0
 
 
 def test_quote_cut_by_a_chunk_boundary_counts_above_the_threshold():
@@ -88,11 +96,23 @@ def test_number_match_normalises_thousands_and_ignores_article_references():
     assert _value(partial, "number_match") == 0.5
 
 
-def test_key_point_coverage_counts_points_whose_words_appear():
-    item = EvalItem("1", "Q?", key_points=["Xe xuống dốc nhường xe lên dốc", "Xe gần chỗ tránh hơn phải vào vị trí tránh"])
-    record = RunRecord("1", "Q?", answer="Xe xuống dốc phải nhường đường cho xe đang lên dốc.")
+def test_judge_scores_are_merged_and_unavailable_metrics_are_skipped():
+    items = [EvalItem("1", "Q?", expected_answer="A"), EvalItem("2", "Q?", expected_answer="B")]
+    records = [RunRecord("1", "Q?", answer="x"), RunRecord("2", "Q?", answer="y")]
+    judged = {"1": {"faithfulness": 1.0}, "2": {"faithfulness": 0.5}}
 
-    assert _value(_score([item], [record], ["key_point_coverage"]), "key_point_coverage") == 0.5
+    report = _score(items, records, ["faithfulness", "factual_correctness"],
+                    columns=(*ALL_COLUMNS, "expected_answer"), judged=judged,
+                    unavailable={"factual_correctness": "no judge API key"})
+
+    assert report.summary["faithfulness"] == {"value": 0.75, "n": 2}
+    assert report.summary["factual_correctness"] == {"skipped": "no judge API key"}
+
+
+def test_timeout_rate():
+    records = [RunRecord("1", "Q?", timed_out=True), RunRecord("2", "Q?"), RunRecord("3", "Q?"), RunRecord("4", "Q?")]
+
+    assert _value(_score([EvalItem(r.id, "Q?") for r in records], records, ["timeout_rate"]), "timeout_rate") == 0.25
 
 
 def test_metric_is_skipped_when_the_dataset_lacks_its_column():
@@ -144,3 +164,11 @@ def test_select_metrics():
     assert select_metrics({"mrr": False}, ["mrr", "latency"], ["latency"]) == ["mrr"]
     with pytest.raises(ValueError, match="unknown metric"):
         select_metrics({"recal": True}, [], [])
+
+
+def test_ragas_group_name_switches_all_judge_metrics():
+    without = select_metrics({}, [], ["ragas"])
+    only = select_metrics({}, ["ragas"], ["semantic_similarity"])
+
+    assert not set(JUDGE_METRICS) & set(without) and "recall_at_k" in without
+    assert set(only) == set(JUDGE_METRICS) - {"semantic_similarity"}
