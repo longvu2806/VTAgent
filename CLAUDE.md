@@ -45,4 +45,10 @@ Qdrant runs embedded under `data/qdrant` until Docker is installed; set
 python -m pytest                               # offline unit tests
 python main.py ingest doc1.pdf doc2.docx       # index documents
 python main.py ask "Mức phạt chậm giao hàng?"  # ask a question
+
+# Eval, two phases (tests/eval/, metrics specified in tests/eval/METRICS.md):
+# generate needs Ollama + Qdrant; score needs nothing for code metrics, and the
+# OpenRouter key (VTAGENT_JUDGE_API_KEY) + Ollama for the RAGAS metrics
+python -m tests.eval.generate data/test/luat_gtdb_2008_eval100.csv --name r0
+python -m tests.eval.score data/eval_runs/r0 --skip ragas
 ```

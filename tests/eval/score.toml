@@ -1,0 +1,46 @@
+# Settings for `python -m tests.eval.score`. Pass another file with --config to vary them,
+# or override metrics on the command line with --only / --skip (`--skip ragas` turns off
+# every judge metric). Metric definitions: tests/eval/METRICS.md.
+
+[params]
+k = 5                     # cut-off for recall_at_k and ndcg_at_k
+evidence_match = 0.8      # share of an evidence quote a chunk must contain (chunk cuts may split quotes)
+group_by = ["category", "difficulty"]  # extra dataset columns to break scores down by
+max_failures = 20         # failing questions listed per metric in the report
+# refusal_phrases = ["..."]  # default: the pipeline's fixed not-found answer
+
+[judge]                   # LLM judge of the RAGAS metrics; URL and API key are in .env
+model = "deepseek-flash"   # DeepSeek API id (OpenRouter: "deepseek/deepseek-v4-flash")
+temperature = 0.0
+max_tokens = 4096         # RAGAS's default 1024 truncates long faithfulness verdicts
+max_concurrency = 8       # parallel judge calls
+extra_body = { thinking = { type = "disabled" } }  # DeepSeek thinks by default: off
+# OpenRouter only:
+reasoning = false         # true: the judge thinks first (may judge better; thinking tokens bill as output)
+providers = []            # pin OpenRouter backends, e.g. ["deepseek"], so reruns are judged alike
+
+[metrics]                 # false = not scored; metrics missing here are scored
+# Retrieval
+recall_at_k = true
+mrr = true
+ndcg_at_k = true
+context_precision = true    # RAGAS
+context_recall = true       # RAGAS
+# Answer correctness
+factual_correctness = true  # RAGAS
+semantic_similarity = true  # RAGAS, embeddings only (no API cost)
+number_match = true
+# Grounding and citation
+faithfulness = true         # RAGAS
+citation_f1 = true
+citation_precision = true
+citation_recall = true
+citation_validity = true
+# Relevance
+answer_relevancy = true     # RAGAS
+# Abstention
+refusal_accuracy = true
+false_refusal_rate = true
+# System
+timeout_rate = true
+latency = true

@@ -1,6 +1,6 @@
 """Data passed between pipeline stages."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,9 @@ class Answer:
     text: str
     citations: list[Citation]
     sources: list[RetrievedChunk]  # everything the LLM was shown, in label order
+    timings: dict[str, float] = field(default_factory=dict)  # stage -> seconds
+    tokens: dict[str, int] = field(default_factory=dict)  # input_tokens, output_tokens
+    timed_out: bool = False  # the LLM was stopped at its time limit; text is incomplete
 
 
 @dataclass(frozen=True)
