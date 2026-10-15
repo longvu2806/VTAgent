@@ -1,4 +1,4 @@
-"""Eval phase 2 — score a generated run and write report_<stamp>.md.
+"""Eval phase 2 — score a generated run and write report_<stamp>.md and scores_<stamp>.csv.
 
     python -m tests.eval.score data/eval_runs/<run> [--config tests/eval/score.toml]
                                                    [--only recall_at_k,mrr] [--skip ragas,latency]
@@ -9,6 +9,7 @@ scoring time, so a corrected dataset is scored without regenerating the answers.
 """
 
 import argparse
+import csv
 import json
 import tomllib
 from datetime import datetime, timezone
@@ -48,10 +49,14 @@ def main() -> None:
     judged, unavailable, judge_line = _judge(enabled, config, dataset, records, params, args.run_dir)
     report = score_run(dataset, records, enabled, params, judged, unavailable)
     _print_summary(report)
-    path = args.run_dir / f"report_{stamp()}.md"
+    scored_at = stamp()
+    path = args.run_dir / f"report_{scored_at}.md"
     markdown = render_markdown(report, dataset, records, meta, args.run_dir, enabled, params, judge_line)
     path.write_text(markdown, encoding="utf-8")
     console.print(f"[green]report[/] → {path}")
+    scores_path = args.run_dir / f"scores_{scored_at}.csv"
+    write_scores(scores_path, report, dataset, records, params)
+    console.print(f"[green]scores[/] → {scores_path}")
 
 
 def _judge(enabled: list[str], config: dict, dataset: Dataset, records: dict[str, RunRecord], params: dict,
@@ -109,7 +114,7 @@ def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunReco
         f"| Generated | {meta.get('created_at', '?')} |",
         f"| Scored | {datetime.now(timezone.utc).isoformat(timespec='seconds')} |",
         f"| Models | {s['llm_model']} · {s['embedding_model']} |",
-        f"| Retrieval | collection `{s['collection']}` · chunk {s['chunk_size']}/{s['chunk_overlap']} tokens · top-{s['top_k']} |",
+        f"| Retrieval | collection `{s['collection']}` · {_chunking(s)} · top-{s['top_k']} |",
         *([f"| Judge | {judge_line} |"] if judge_line else []),
         "",
         "Full settings are in `meta.json`.",
@@ -146,6 +151,38 @@ def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunReco
 
     lines += _failures(report, dataset, records, params["max_failures"])
     return "\n".join(lines) + "\n"
+
+
+def _chunking(s: dict) -> str:
+    if s.get("chunking") == "structured":
+        return (f"structured chunks: child {s['child_min_tokens']}–{s['child_max_tokens']}, parent ≤ "
+                f"{s['parent_max_tokens']}, context budget {s['context_budget_tokens']} tokens")
+    return f"fixed chunks {s['chunk_size']}/{s['chunk_overlap']} tokens"
+
+
+def write_scores(path: Path, report: Report, dataset: Dataset, records: dict[str, RunRecord], params: dict) -> None:
+    """One row per scored question, in dataset order, with one column per scored metric.
+    An empty cell means the metric does not apply to that question."""
+    group_by = [c for c in {**DEFAULT_PARAMS, **params}["group_by"] if any(c in i.extra for i in dataset.items)]
+    metrics = [name for name, result in report.summary.items() if "skipped" not in result]
+    rows = []
+    for item in dataset.items:
+        if item.id not in report.item_scores:
+            continue
+        scores = report.item_scores[item.id]
+        rows.append({
+            "id": item.id,
+            "question": item.question,
+            "answerable": "yes" if item.answerable else "no",
+            **{c: item.extra.get(c, "") for c in group_by},
+            "timed_out": "yes" if records[item.id].timed_out else "",
+            "latency_s": round(records[item.id].latency_s, 2),
+            **{m: "" if scores[m] is None else round(scores[m], 4) for m in metrics},
+        })
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["id"])
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _failures(report: Report, dataset: Dataset, records: dict[str, RunRecord], limit: int) -> list[str]:

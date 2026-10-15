@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import atexit
-from functools import cache
+from functools import cache, partial
 from typing import TYPE_CHECKING
 
 from config import Settings
 from config import settings as default_settings
+from core.chunking import split_pages_fixed, split_structured
+from core.context import assemble
 from core.ingestion import Ingestor
 from core.naive_rag import NaiveRAG
 from core.stores import DocumentRegistry, VectorStore
@@ -15,20 +17,26 @@ from core.stores import DocumentRegistry, VectorStore
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
     from qdrant_client import QdrantClient
+    from tokenizers import Tokenizer
+
+FALLBACK_CHUNK_TOKENS = 300  # documents without recognised structure (SAD 6.2)
 
 
 def build_ingestor(s: Settings = default_settings) -> Ingestor:
-    from tokenizers import Tokenizer
-
+    tokenizer = _tokenizer(s.tokenizer_name)
+    if s.chunking == "fixed":
+        chunker = partial(split_pages_fixed, tokenizer=tokenizer, chunk_size=s.chunk_size, overlap=s.chunk_overlap)
+    else:
+        chunker = partial(split_structured, tokenizer=tokenizer, child_min=s.child_min_tokens,
+                          child_max=s.child_max_tokens, parent_max=s.parent_max_tokens,
+                          fallback_max=FALLBACK_CHUNK_TOKENS)
     s.data_dir.mkdir(parents=True, exist_ok=True)
     return Ingestor(
         files_dir=s.data_dir / "files",
-        tokenizer=Tokenizer.from_pretrained(s.tokenizer_name),
+        chunker=chunker,
         embedder=_embedder(s),
         store=_vector_store(s),
         registry=DocumentRegistry(s.data_dir / "vtagent.db", s.collection),
-        chunk_size=s.chunk_size,
-        overlap=s.chunk_overlap,
     )
 
 
@@ -43,7 +51,21 @@ def build_naive_rag(s: Settings = default_settings) -> NaiveRAG:
         num_ctx=s.llm_num_ctx,
         reasoning=False,  # thinking mode off (SAD Table 9.1)
     )
-    return NaiveRAG(_embedder(s), _vector_store(s), llm, s.top_k, timeout_s=s.llm_timeout_s)
+    assembler = None
+    if s.chunking == "structured":
+        tokenizer = _tokenizer(s.tokenizer_name)  # bge-m3's, close enough to the LLM's for a budget
+
+        def count(text: str) -> int:
+            return len(tokenizer.encode(text, add_special_tokens=False).ids)
+
+        assembler = partial(assemble, budget=s.context_budget_tokens, count_tokens=count)
+    return NaiveRAG(_embedder(s), _vector_store(s), llm, s.top_k, timeout_s=s.llm_timeout_s, assemble=assembler)
+
+
+def _tokenizer(name: str) -> Tokenizer:
+    from tokenizers import Tokenizer
+
+    return Tokenizer.from_pretrained(name)
 
 
 def _embedder(s: Settings) -> Embeddings:

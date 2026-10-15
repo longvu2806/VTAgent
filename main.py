@@ -1,4 +1,4 @@
-"""VTAgent command line — R0 naive RAG: index documents, ask questions."""
+"""VTAgent command line — naive RAG (R0 / R1, see VTAGENT_CHUNKING): index documents, ask questions."""
 
 import argparse
 from pathlib import Path
@@ -47,10 +47,10 @@ def _ask(question: str) -> None:
     answer = build_naive_rag().ask(question)
     console.print(Markdown(answer.text))
     if answer.citations:
-        table = Table("Label", "Source", "Page", "Text")
+        table = Table("Label", "Source", "Section", "Page", "Text")
         for c in answer.citations:
             snippet = c.chunk.text[:120].replace("\n", " ")
-            table.add_row(c.label, c.chunk.source, str(c.chunk.page or "–"), snippet + "…")
+            table.add_row(c.label, c.chunk.source, c.chunk.section or "–", str(c.chunk.page or "–"), snippet + "…")
         console.print(table)
 
 

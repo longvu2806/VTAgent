@@ -12,7 +12,7 @@ from tests.eval.dataset import load_dataset
 from tests.eval.generate import prepare_run_dir, run
 from tests.eval.metrics import select_metrics, score_run
 from tests.eval.runs import read_records
-from tests.eval.score import render_markdown
+from tests.eval.score import render_markdown, write_scores
 
 SETTINGS = {"llm_model": "fake", "embedding_model": "fake", "collection": "c", "chunk_size": 400,
             "chunk_overlap": 50, "top_k": 5}
@@ -128,3 +128,19 @@ def test_score_report_end_to_end(tmp_path, dataset):
     assert "## Latency (seconds)" in markdown and "| generate |" in markdown
     assert "## By category" in markdown
     assert report.timed_out == ["2"] and "### timed out: 1 questions" in markdown
+
+
+def test_per_question_scores_csv(tmp_path, dataset):
+    run(dataset.items, _answer, tmp_path / RECORDS, tmp_path / RESULTS)
+    records = read_records(tmp_path / RECORDS)
+    enabled = select_metrics({}, ["recall_at_k", "number_match", "refusal_accuracy"], [])
+    report = score_run(dataset, records, enabled, {"group_by": ["category", "difficulty"]})
+
+    write_scores(tmp_path / "scores.csv", report, dataset, records, {"group_by": ["category", "difficulty"]})
+
+    with (tmp_path / "scores.csv").open(encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    assert list(rows[0]) == ["id", "question", "answerable", "category", "timed_out", "latency_s",
+                             "recall_at_k", "refusal_accuracy"]  # skipped metric and absent column left out
+    assert (rows[0]["recall_at_k"], rows[0]["refusal_accuracy"]) == ("1.0", "")  # empty: does not apply
+    assert (rows[1]["recall_at_k"], rows[1]["refusal_accuracy"], rows[1]["timed_out"]) == ("", "1.0", "yes")

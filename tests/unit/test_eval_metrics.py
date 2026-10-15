@@ -38,6 +38,17 @@ def test_retrieval_metrics_find_evidence_despite_markdown_and_line_breaks():
     assert _value(_score([item], [record], ["recall_at_k"], k=1), "recall_at_k") == 0.0
 
 
+def test_retrieval_metrics_use_the_retrieved_children_not_the_assembled_articles():
+    item = EvalItem("1", "Q?", evidence=[QUOTE])
+    article = _ctx("b", "Điều 60. " + QUOTE)  # the parent the LLM read holds the quote ...
+    record = RunRecord("1", "Q?", contexts=[article],
+                       retrieved=[_ctx("a", "nhiễu"), _ctx("b", "Điều 60. Độ tuổi của người lái xe")])  # ... the hits do not
+
+    report = _score([item], [record], ["recall_at_k", "mrr", "ndcg_at_k"])
+
+    assert (_value(report, "recall_at_k"), _value(report, "mrr"), _value(report, "ndcg_at_k")) == (0.0, 0.0, 0.0)
+
+
 def test_ndcg_does_not_penalise_one_chunk_holding_several_quotes():
     item = EvalItem("1", "Q?", evidence=["phạt 0,05% mỗi ngày", "tối đa 8% giá trị"])
     record = RunRecord("1", "Q?", contexts=[_ctx("a", "Bên B chịu phạt 0,05% mỗi ngày, tối đa 8% giá trị."),

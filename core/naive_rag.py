@@ -1,12 +1,14 @@
-"""R0 query path: embed question → dense top-k → prompt → LLM → answer with [S#] citations."""
+"""Query path: embed question → dense top-k → [assemble context] → prompt → LLM → answer
+with [S#] citations. R0 shows the LLM the retrieved chunks; R1 swaps them for parents."""
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextlib import closing
 from typing import TYPE_CHECKING
 
-from core.models import Answer
+from core.models import Answer, RetrievedChunk
 from core.prompting import NOT_FOUND, build_messages, extract_citations
 from observability import log, timed
 
@@ -23,21 +25,27 @@ _OLLAMA_DURATIONS = {"load_duration": "llm_load", "prompt_eval_duration": "llm_p
 
 class NaiveRAG:
     def __init__(self, embedder: Embeddings, store: VectorStore, llm: BaseChatModel, top_k: int,
-                 timeout_s: float | None = None):
+                 timeout_s: float | None = None,
+                 assemble: Callable[[list[RetrievedChunk]], list[RetrievedChunk]] | None = None):
         self.embedder = embedder
         self.store = store
         self.llm = llm
         self.top_k = top_k
         self.timeout_s = timeout_s  # None: no limit on the LLM step
+        self.assemble = assemble  # None: the LLM reads the retrieved chunks as they are (R0)
 
     def ask(self, question: str) -> Answer:
         timings: dict[str, float] = {}
         with timed("embed_query", timings):
             vector = self.embedder.embed_query(question)
         with timed("search", timings):
-            sources = self.store.search(vector, self.top_k)
-        if not sources:
+            hits = self.store.search(vector, self.top_k)
+        if not hits:
             return Answer(NOT_FOUND, citations=[], sources=[], timings=timings)
+        sources = hits
+        if self.assemble is not None:
+            with timed("assemble", timings):
+                sources = self.assemble(hits)
 
         with timed("generate", timings):
             reply, timed_out = self._generate(build_messages(question, sources))
@@ -48,7 +56,7 @@ class NaiveRAG:
                 timings[stage] = reply.response_metadata[key] / 1e9
         usage = reply.usage_metadata or {}
         tokens = {k: usage[k] for k in ("input_tokens", "output_tokens") if k in usage}
-        return Answer(reply.text, extract_citations(reply.text, sources), sources, timings, tokens, timed_out)
+        return Answer(reply.text, extract_citations(reply.text, sources), sources, timings, tokens, timed_out, hits)
 
     def _generate(self, messages: list[tuple[str, str]]) -> tuple[AIMessageChunk, bool]:
         """Stream the reply and stop once ``timeout_s`` has passed (checked as tokens arrive).

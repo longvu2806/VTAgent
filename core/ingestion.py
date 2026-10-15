@@ -1,23 +1,23 @@
-"""R0 ingestion: parse → fixed-size chunks → embed → Qdrant; originals kept in a file store."""
+"""Ingestion: parse → chunks → embed → Qdrant; originals kept in a file store."""
 
 from __future__ import annotations
 
 import hashlib
 import shutil
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.chunking import split_fixed
 from core.models import Chunk, DocumentRecord, PageText
 from core.parsing import parse
 from observability import log, timed
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
-    from tokenizers import Tokenizer
 
+    from core.chunking import Piece
     from core.stores import DocumentRegistry, VectorStore
 
 
@@ -25,20 +25,16 @@ class Ingestor:
     def __init__(
         self,
         files_dir: Path,
-        tokenizer: Tokenizer,
+        chunker: Callable[[list[PageText]], list[Piece]],
         embedder: Embeddings,
         store: VectorStore,
         registry: DocumentRegistry,
-        chunk_size: int,
-        overlap: int,
     ):
         self.files_dir = files_dir
-        self.tokenizer = tokenizer
+        self.chunker = chunker  # split_pages_fixed (R0) or split_structured (R1), configured
         self.embedder = embedder
         self.store = store
         self.registry = registry
-        self.chunk_size = chunk_size
-        self.overlap = overlap
         files_dir.mkdir(parents=True, exist_ok=True)
 
     def ingest(self, path: Path) -> DocumentRecord:
@@ -68,11 +64,11 @@ class Ingestor:
         return record
 
     def _chunk(self, doc_id: str, source: str, pages: list[PageText]) -> list[Chunk]:
-        """Chunks never span pages, so every chunk cites exactly one page."""
         chunks = []
-        for page in pages:
-            for text in split_fixed(page.text, self.tokenizer, self.chunk_size, self.overlap):
-                index = len(chunks)
-                chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"vtagent:{doc_id}:{index}"))
-                chunks.append(Chunk(chunk_id, doc_id, source, page.page, index, text))
+        for index, piece in enumerate(self.chunker(pages)):
+            chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"vtagent:{doc_id}:{index}"))
+            parent_id = None if piece.parent_key is None else str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"vtagent:{doc_id}:parent:{piece.parent_key}"))
+            chunks.append(Chunk(chunk_id, doc_id, source, piece.page, index, piece.text,
+                                piece.section, parent_id, piece.parent_text))
         return chunks

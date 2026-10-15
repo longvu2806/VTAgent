@@ -19,6 +19,9 @@ class Chunk:
     page: int | None
     index: int  # position of the chunk within its document
     text: str
+    section: str = ""  # place in the document's structure, e.g. "Điều 8. … › Khoản 8" (R1+)
+    parent_id: str | None = None  # children of one parent share it (R1+)
+    parent_text: str = ""  # the parent's text, stored with each child (SAD 7.x)
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,7 @@ class Answer:
     timings: dict[str, float] = field(default_factory=dict)  # stage -> seconds
     tokens: dict[str, int] = field(default_factory=dict)  # input_tokens, output_tokens
     timed_out: bool = False  # the LLM was stopped at its time limit; text is incomplete
+    retrieved: list[RetrievedChunk] = field(default_factory=list)  # search hits by rank, before assembly
 
 
 @dataclass(frozen=True)

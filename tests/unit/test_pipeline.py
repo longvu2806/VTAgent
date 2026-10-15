@@ -1,5 +1,6 @@
 """Ingest + ask end to end, with fake models and in-memory Qdrant."""
 
+from functools import partial
 from pathlib import Path
 
 import docx
@@ -11,6 +12,8 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 from qdrant_client import QdrantClient
 
+from core.chunking import split_pages_fixed, split_structured
+from core.context import assemble
 from core.ingestion import Ingestor
 from core.naive_rag import NaiveRAG
 from core.prompting import NOT_FOUND
@@ -56,15 +59,13 @@ def contract(tmp_path):
     return path
 
 
-def _ingestor(tmp_path, tokenizer, embedder, client, collection="test"):
+def _ingestor(tmp_path, tokenizer, embedder, client, collection="test", chunker=None):
     return Ingestor(
         files_dir=tmp_path / "files",
-        tokenizer=tokenizer,
+        chunker=chunker or partial(split_pages_fixed, tokenizer=tokenizer, chunk_size=400, overlap=50),
         embedder=embedder,
         store=VectorStore(client, collection),
         registry=DocumentRegistry(tmp_path / "db.sqlite", collection),
-        chunk_size=400,
-        overlap=50,
     )
 
 
@@ -82,6 +83,29 @@ def test_ingest_then_ask_maps_citation_to_chunk(tmp_path, word_tokenizer, embedd
     assert citation.chunk.doc_id == record.doc_id
     assert citation.chunk.source == "hd.docx"
     assert "0,05%" in citation.chunk.text
+
+
+def test_structured_children_reach_the_llm_as_their_article(tmp_path, word_tokenizer, embedder, client):
+    path = tmp_path / "luat.docx"
+    document = docx.Document()
+    for line in ["Điều 8. Các hành vi bị nghiêm cấm", "1. Phá hoại đường, cầu.", "2. Lái xe ô tô có nồng độ cồn."]:
+        document.add_paragraph(line)
+    document.save(path)
+    chunker = partial(split_structured, tokenizer=word_tokenizer, child_min=1, child_max=400, parent_max=1200,
+                      fallback_max=300)
+    assert _ingestor(tmp_path, word_tokenizer, embedder, client, chunker=chunker).ingest(path).n_chunks == 2
+
+    llm = FakeListChatModel(responses=["Bị nghiêm cấm [S1]."])
+    rag = NaiveRAG(embedder, VectorStore(client, "test"), llm, top_k=5,
+                   assemble=partial(assemble, budget=2500, count_tokens=lambda t: len(t.split())))
+    answer = rag.ask("Lái xe có nồng độ cồn có bị cấm không?")
+
+    assert len(answer.retrieved) == 2 and answer.retrieved[0].chunk.parent_id == answer.retrieved[1].chunk.parent_id
+    [source] = answer.sources
+    assert "Phá hoại" in source.chunk.text and "nồng độ cồn" in source.chunk.text
+    assert source.chunk.section == "Điều 8. Các hành vi bị nghiêm cấm"
+    assert answer.citations[0].chunk == source.chunk
+    assert "assemble" in answer.timings
 
 
 def test_reingesting_same_file_skips_embedding(tmp_path, word_tokenizer, embedder, client, contract):

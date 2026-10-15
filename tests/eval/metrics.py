@@ -106,6 +106,11 @@ def _numbers(text: str) -> set[str]:
     return {re.sub(r"\.(?=\d{3}\b)", "", n).replace(",", ".") for n in _NUMBER.findall(text)}
 
 
+def _ranked(rec: RunRecord) -> list[str]:
+    """Texts of the search hits by rank: the retrieved children from R1 on, the contexts in R0."""
+    return [c["text"] for c in rec.retrieved or rec.contexts]
+
+
 def _cited_texts(rec: RunRecord) -> list[str]:
     by_id = {c["chunk_id"]: c["text"] for c in rec.contexts}
     return [by_id[c["chunk_id"]] for c in rec.citations if c["chunk_id"] in by_id]
@@ -116,14 +121,14 @@ def _cited_texts(rec: RunRecord) -> list[str]:
 def recall_at_k(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
     if not item.answerable or not item.evidence:
         return None
-    return _quotes_found([c["text"] for c in rec.contexts[: p["k"]]], item, p)
+    return _quotes_found(_ranked(rec)[: p["k"]], item, p)
 
 
 def mrr(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
     if not item.answerable or not item.evidence:
         return None
-    for rank, context in enumerate(rec.contexts, start=1):
-        if _relevant(context["text"], item, p):
+    for rank, text in enumerate(_ranked(rec), start=1):
+        if _relevant(text, item, p):
             return 1 / rank
     return 0.0
 
@@ -131,7 +136,7 @@ def mrr(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
 def ndcg_at_k(item: EvalItem, rec: RunRecord, p: dict) -> float | None:
     if not item.answerable or not item.evidence:
         return None
-    relevant = [_relevant(c["text"], item, p) for c in rec.contexts[: p["k"]]]
+    relevant = [_relevant(text, item, p) for text in _ranked(rec)[: p["k"]]]
     dcg = sum(1 / math.log2(i + 2) for i, r in enumerate(relevant) if r)
     # Ideal ranking of the retrieved chunks: all relevant ones first. Missing evidence is
     # recall_at_k's job, so one chunk holding several quotes is not penalised.

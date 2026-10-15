@@ -111,8 +111,19 @@ A chunk is **relevant** to a question when it contains at least one of its quote
 
 ### Retrieved chunks
 
-The chunks the pipeline showed the LLM, in rank order (`contexts` in the record, labelled
-`[S1]`, `[S2]`, … in the prompt). R0 stores the top 5.
+The chunks the search returned, in rank order. R0 shows them to the LLM as they are, so
+they are also its **contexts** (`contexts` in the record, labelled `[S1]`, `[S2]`, … in the
+prompt). R0 stores the top 5.
+
+From R1 on, the search returns child chunks (one Khoản each) and context assembly swaps
+them for their parent articles before the LLM reads them, in document order (SAD 6.7).
+The record then keeps both:
+
+- `retrieved`: the child chunks by rank. The code retrieval metrics (§4.1–4.3) use these,
+  so they measure the search itself and stay comparable with R0: a whole article would
+  contain the evidence more often and inflate recall, and document order has no ranks.
+- `contexts`: the assembled sources the LLM read. Citation metrics and every judge metric
+  (context precision and recall included) use these.
 
 ### Refusal
 

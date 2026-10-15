@@ -36,4 +36,6 @@ def extract_citations(answer: str, sources: list[RetrievedChunk]) -> list[Citati
 
 
 def _source_line(chunk: Chunk) -> str:
-    return chunk.source if chunk.page is None else f"{chunk.source} · page {chunk.page}"
+    """'contract.pdf · Điều 5. Phạt vi phạm › Khoản 1 · page 6' (SAD 6.7)."""
+    page = None if chunk.page is None else f"page {chunk.page}"
+    return " · ".join(part for part in (chunk.source, chunk.section, page) if part)

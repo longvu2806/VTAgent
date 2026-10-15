@@ -20,7 +20,7 @@ from rich.progress import Progress
 
 from config import JUDGE_SETTINGS, settings
 from core.agent_factory import build_ingestor, build_naive_rag
-from core.models import Answer
+from core.models import Answer, RetrievedChunk
 from observability import console, log, setup_logging
 from tests.eval.dataset import Dataset, EvalItem, load_dataset
 from tests.eval.runs import RunRecord, append_record, read_records, stamp, write_results
@@ -104,13 +104,20 @@ def _answer(item: EvalItem, ask: Callable[[str], Answer]) -> RunRecord:
         id=item.id,
         question=item.question,
         answer=answer.text,
-        contexts=[{"rank": rank, **asdict(s.chunk), "score": s.score} for rank, s in enumerate(answer.sources, 1)],
+        contexts=_ranked(answer.sources),
+        retrieved=_ranked(answer.retrieved) if answer.retrieved != answer.sources else [],  # R0: = contexts
         citations=[{"label": c.label, "chunk_id": c.chunk.chunk_id} for c in answer.citations],
         timings=answer.timings,
         tokens=answer.tokens,
         latency_s=time.perf_counter() - start,
         timed_out=answer.timed_out,
     )
+
+
+def _ranked(chunks: list[RetrievedChunk]) -> list[dict]:
+    """Chunks as stored in a record; parent_text is left out (a source already shows it)."""
+    return [{"rank": rank, **{k: v for k, v in asdict(s.chunk).items() if k != "parent_text"}, "score": s.score}
+            for rank, s in enumerate(chunks, 1)]
 
 
 def _ingest(dataset: Dataset) -> None:

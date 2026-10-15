@@ -5,6 +5,7 @@
         records_<created>.jsonl    one RunRecord per question; input of the score phase
         results_<created>.csv      the same records flattened for reading in Excel
         report_<scored>.md         one per scoring, so rescoring keeps earlier reports
+        scores_<scored>.csv        per-question score of every metric, written with the report
 
 <created> and <scored> are local times as YYYYMMDD-HHMMSS.
 """
@@ -29,6 +30,7 @@ class RunRecord:
     question: str
     answer: str = ""
     contexts: list[dict] = field(default_factory=list)  # chunks shown to the LLM, in [S#] order
+    retrieved: list[dict] = field(default_factory=list)  # search hits by rank, before context assembly (R1+)
     citations: list[dict] = field(default_factory=list)  # {"label", "chunk_id"}, as cited
     timings: dict[str, float] = field(default_factory=dict)  # pipeline stage -> seconds
     tokens: dict[str, int] = field(default_factory=dict)
@@ -68,7 +70,7 @@ def write_results(path: Path, items: list[EvalItem], records: dict[str, RunRecor
             "expected_answer": item.expected_answer,
             "answer": r.answer,
             "citations": "; ".join(f"{c['label']}: {_place(by_id[c['chunk_id']])}" for c in r.citations),
-            "retrieved": "; ".join(f"{c['rank']}. {_place(c)} ({c['score']:.3f})" for c in r.contexts),
+            "retrieved": "; ".join(f"{c['rank']}. {_place(c)} ({c['score']:.3f})" for c in r.retrieved or r.contexts),
             "latency_s": round(r.latency_s, 2),
             **{f"{stage}_s": round(r.timings[stage], 2) if stage in r.timings else "" for stage in stages},
             "input_tokens": r.tokens.get("input_tokens", ""),

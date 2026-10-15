@@ -150,6 +150,8 @@ The metrics, how each is computed and which are primary are specified in
   scored like any answer and listed in the report; it is not retried.
 - **Phase 2 output:** `report_<time>.md`, a new one per scoring, with the summary,
   latency per stage, scores per category and difficulty, and the failing questions.
+  Next to it, `scores_<time>.csv` has one row per question and one column per metric
+  (an empty cell: the metric does not apply to that question), for checking scores by hand.
   Turn metrics on and off in `tests/eval/score.toml` or with `--only` / `--skip`. The
   dataset is re-read, so a corrected dataset is scored without regenerating answers.
 - **RAGAS metrics** (`context_precision`, `context_recall`, `faithfulness`,

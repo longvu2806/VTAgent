@@ -1,6 +1,7 @@
 """Application settings, overridable via VTAGENT_* environment variables or .env."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,9 +29,17 @@ class Settings(BaseSettings):
     embedding_model: str = "bge-m3"
     tokenizer_name: str = "BAAI/bge-m3"  # must match embedding_model
 
-    # R0 baseline: fixed-size chunking, dense-only retrieval (SAD Table 6.5)
-    chunk_size: int = 400  # tokens
-    chunk_overlap: int = 50  # tokens
+    # Chunking (SAD Table 6.5): "fixed" = R0, windows of chunk_size tokens per page;
+    # "structured" = R1, parent–child chunks along Điều / Khoản / Điểm (SAD 6.2)
+    chunking: Literal["fixed", "structured"] = "fixed"
+    chunk_size: int = 400  # tokens (fixed)
+    chunk_overlap: int = 50  # tokens (fixed)
+    child_min_tokens: int = 80  # structured: smaller children merge with the next (SAD Table 6.3)
+    child_max_tokens: int = 400  # structured: larger children are split
+    parent_max_tokens: int = 1200  # structured: longer articles are split into several parents
+    context_budget_tokens: int = 2500  # structured: evidence in the answer prompt (SAD Table 6.4)
+
+    # Retrieval: dense only (R0–R2)
     top_k: int = 5
 
     # LLM judge of the eval's RAGAS metrics (any OpenAI-compatible API). Used only by
