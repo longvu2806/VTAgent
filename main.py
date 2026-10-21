@@ -1,4 +1,4 @@
-"""VTAgent command line — naive RAG (R0 / R1, see VTAGENT_CHUNKING): index documents, ask questions."""
+"""VTAgent command line — single-pass RAG (configs R0–R4, see .env.example): index documents, ask questions."""
 
 import argparse
 from pathlib import Path
@@ -7,7 +7,7 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from config import settings
-from core.agent_factory import build_ingestor, build_naive_rag
+from core.agent_factory import build_ingestor, build_pipeline
 from core.parsing import UnsupportedDocumentError
 from observability import console, log, setup_logging
 
@@ -44,7 +44,7 @@ def _ingest(paths: list[Path]) -> None:
 
 
 def _ask(question: str) -> None:
-    answer = build_naive_rag().ask(question)
+    answer = build_pipeline().ask(question)
     console.print(Markdown(answer.text))
     if answer.citations:
         table = Table("Label", "Source", "Section", "Page", "Text")

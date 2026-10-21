@@ -10,6 +10,12 @@ qdrant-client==1.19.1
 rich==15.0.0
 tokenizers==0.23.2
 
+# Hybrid search and reranking (R3–R4), CPU only, no PyTorch
+onnxruntime==1.30.0
+huggingface_hub==1.33.0
+numpy==2.4.6
+bge-m3-lite==0.6.2
+
 # Eval judge (tests/eval/ragas_judge.py)
 ragas==0.4.3
 openai==3.3.0

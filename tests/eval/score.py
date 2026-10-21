@@ -114,7 +114,7 @@ def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunReco
         f"| Generated | {meta.get('created_at', '?')} |",
         f"| Scored | {datetime.now(timezone.utc).isoformat(timespec='seconds')} |",
         f"| Models | {s['llm_model']} · {s['embedding_model']} |",
-        f"| Retrieval | collection `{s['collection']}` · {_chunking(s)} · top-{s['top_k']} |",
+        f"| Retrieval | collection `{s['collection']}` · {_chunking(s)} · {_search(s)} · top-{s['top_k']} |",
         *([f"| Judge | {judge_line} |"] if judge_line else []),
         "",
         "Full settings are in `meta.json`.",
@@ -143,6 +143,8 @@ def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunReco
 
     scored = [name for name, result in report.summary.items() if "skipped" not in result]
     for column, by_value in report.groups.items():
+        if not by_value:  # the dataset has no such column
+            continue
         lines += ["", f"## By {column}", "", f"| {column} | " + " | ".join(scored) + " |",
                   "|---|" + "---|" * len(scored)]
         for value, results in by_value.items():
@@ -158,6 +160,17 @@ def _chunking(s: dict) -> str:
         return (f"structured chunks: child {s['child_min_tokens']}–{s['child_max_tokens']}, parent ≤ "
                 f"{s['parent_max_tokens']}, context budget {s['context_budget_tokens']} tokens")
     return f"fixed chunks {s['chunk_size']}/{s['chunk_overlap']} tokens"
+
+
+def _search(s: dict) -> str:
+    sparse = s.get("sparse", "none")  # runs before R3 have no such setting
+    search = "dense search" if sparse == "none" else f"dense + {sparse} search, RRF"
+    if sparse == "bm25" and s.get("normalize_numbers"):
+        search += ", numbers normalized"
+    if s.get("rerank"):
+        threshold = s.get("rerank_threshold")
+        search += " · reranked" + ("" if threshold is None else f", threshold {threshold}")
+    return search
 
 
 def write_scores(path: Path, report: Report, dataset: Dataset, records: dict[str, RunRecord], params: dict) -> None:

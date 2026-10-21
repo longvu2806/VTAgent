@@ -125,6 +125,10 @@ The record then keeps both:
 - `contexts`: the assembled sources the LLM read. Citation metrics and every judge metric
   (context precision and recall included) use these.
 
+With hybrid search (R3), `score` is the RRF fusion score. With reranking (R4), `retrieved`
+holds the top-k child chunks after reranking, and `score` is the reranker's relevance
+in [0, 1]. The retrieval metrics therefore measure the chunks the LLM actually reads.
+
 ### Refusal
 
 An answer is a **refusal** when, after normalisation, it **starts with** one of

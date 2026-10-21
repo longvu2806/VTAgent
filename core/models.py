@@ -25,6 +25,14 @@ class Chunk:
 
 
 @dataclass(frozen=True)
+class SparseVector:
+    """Term weights for keyword matching (hybrid search, SAD 6.4)."""
+
+    indices: list[int]  # term ids: hashed tokens (BM25) or tokenizer ids (bge-m3)
+    values: list[float]
+
+
+@dataclass(frozen=True)
 class RetrievedChunk:
     chunk: Chunk
     score: float

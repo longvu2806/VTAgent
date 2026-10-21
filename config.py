@@ -39,8 +39,15 @@ class Settings(BaseSettings):
     parent_max_tokens: int = 1200  # structured: longer articles are split into several parents
     context_budget_tokens: int = 2500  # structured: evidence in the answer prompt (SAD Table 6.4)
 
-    # Retrieval: dense only (R0–R2)
+    # Retrieval (SAD 6.4–6.6). A sparse type needs its own collection (VTAGENT_COLLECTION).
     top_k: int = 5
+    sparse: Literal["none", "bm25", "bge-m3"] = "none"  # hybrid search: R3 = bm25, R3′ = bge-m3
+    normalize_numbers: bool = False  # bm25 only: "160 triệu" and "160.000.000" become one token
+    bge_m3_precision: Literal["int8", "fp32"] = "int8"  # bge-m3 sparse model; int8 fits the RAM budget
+    rerank: bool = False  # R4: cross-encoder reranks the candidates down to top_k
+    reranker_repo: str = "onnx-community/bge-reranker-v2-m3-ONNX"
+    reranker_file: str = "onnx/model_int8.onnx"  # ONNX int8 on the CPU (SAD 6.6)
+    rerank_threshold: float | None = None  # None: keep top_k; set after calibrating on the eval sets
 
     # LLM judge of the eval's RAGAS metrics (any OpenAI-compatible API). Used only by
     # tests/eval/score.py; the judge model is chosen in tests/eval/score.toml.

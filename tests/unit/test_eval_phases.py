@@ -16,6 +16,7 @@ from tests.eval.score import render_markdown, write_scores
 
 SETTINGS = {"llm_model": "fake", "embedding_model": "fake", "collection": "c", "chunk_size": 400,
             "chunk_overlap": 50, "top_k": 5}
+CORPUS = ["law.pdf"]
 RECORDS, RESULTS = "records.jsonl", "results.csv"
 
 
@@ -97,28 +98,30 @@ def test_generate_stops_when_every_question_fails(tmp_path, dataset):
 
 
 def test_output_files_are_stamped_with_the_run_creation_time(tmp_path):
-    meta = prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)
+    meta = prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS, CORPUS)
 
     assert re.fullmatch(r"records_\d{8}-\d{6}\.jsonl", meta["records"])
     assert meta["results"] == meta["records"].replace("records_", "results_").replace(".jsonl", ".csv")
-    assert prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)["records"] == meta["records"]  # resume: same files
+    assert prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS, CORPUS)["records"] == meta["records"]  # resume: same files
 
 
-def test_resuming_with_other_settings_is_refused(tmp_path):
-    prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)
-    prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS)  # same settings: fine
+def test_resuming_with_other_settings_or_corpus_is_refused(tmp_path):
+    prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS, CORPUS)
+    prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS, CORPUS)  # same settings: fine
 
     with pytest.raises(SystemExit, match="top_k"):
-        prepare_run_dir(tmp_path, Path("set.csv"), {**SETTINGS, "top_k": 3})
+        prepare_run_dir(tmp_path, Path("set.csv"), {**SETTINGS, "top_k": 3}, CORPUS)
+    with pytest.raises(SystemExit, match="corpus"):  # documents added to the collection since
+        prepare_run_dir(tmp_path, Path("set.csv"), SETTINGS, [*CORPUS, "decree.docx"])
 
 
 def test_score_report_end_to_end(tmp_path, dataset):
-    prepare_run_dir(tmp_path, dataset.path, SETTINGS)
+    prepare_run_dir(tmp_path, dataset.path, SETTINGS, CORPUS)
     run(dataset.items, _answer, tmp_path / RECORDS, tmp_path / RESULTS)
     records = read_records(tmp_path / RECORDS)
     enabled = select_metrics({"mrr": False}, [], ["ragas"])
 
-    report = score_run(dataset, records, enabled, {"group_by": ["category"]})
+    report = score_run(dataset, records, enabled, {"group_by": ["category", "target"]})  # no target column
     markdown = render_markdown(report, dataset, records, {"settings": SETTINGS}, tmp_path, enabled, {"k": 5})
 
     assert report.summary["recall_at_k"]["value"] == 1.0
@@ -126,8 +129,18 @@ def test_score_report_end_to_end(tmp_path, dataset):
     assert "| number_match | skipped | – | dataset has no key_points column |" in markdown
     assert "Disabled: `mrr`, `context_precision`" in markdown
     assert "## Latency (seconds)" in markdown and "| generate |" in markdown
-    assert "## By category" in markdown
+    assert "## By category" in markdown and "## By target" not in markdown
     assert report.timed_out == ["2"] and "### timed out: 1 questions" in markdown
+    assert "fixed chunks 400/50 tokens · dense search · top-5 |" in markdown
+
+
+def test_report_names_the_hybrid_search_and_reranking(tmp_path, dataset):
+    settings = {**SETTINGS, "sparse": "bm25", "normalize_numbers": True, "rerank": True, "rerank_threshold": 0.3}
+    report = score_run(dataset, {}, [], {})
+
+    markdown = render_markdown(report, dataset, {}, {"settings": settings}, tmp_path, [], {})
+
+    assert "dense + bm25 search, RRF, numbers normalized · reranked, threshold 0.3 · top-5 |" in markdown
 
 
 def test_per_question_scores_csv(tmp_path, dataset):

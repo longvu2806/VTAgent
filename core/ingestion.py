@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
     from core.chunking import Piece
+    from core.sparse import SparseEncoder
     from core.stores import DocumentRegistry, VectorStore
 
 
@@ -29,12 +30,14 @@ class Ingestor:
         embedder: Embeddings,
         store: VectorStore,
         registry: DocumentRegistry,
+        sparse_encoder: SparseEncoder | None = None,
     ):
         self.files_dir = files_dir
         self.chunker = chunker  # split_pages_fixed (R0) or split_structured (R1), configured
         self.embedder = embedder
         self.store = store
         self.registry = registry
+        self.sparse_encoder = sparse_encoder  # hybrid search (R3): BM25 or bge-m3 term weights
         files_dir.mkdir(parents=True, exist_ok=True)
 
     def ingest(self, path: Path) -> DocumentRecord:
@@ -47,9 +50,14 @@ class Ingestor:
         with timed(f"parse {path.name}"):
             pages = parse(path)
         chunks = self._chunk(doc_id, path.name, pages)
+        texts = [c.text for c in chunks]
         with timed(f"embed {len(chunks)} chunks"):
-            vectors = self.embedder.embed_documents([c.text for c in chunks])
-        self.store.upsert(chunks, vectors)
+            vectors = self.embedder.embed_documents(texts)
+        sparse = None
+        if self.sparse_encoder is not None:
+            with timed(f"sparse vectors for {len(chunks)} chunks"):
+                sparse = self.sparse_encoder.documents(texts)
+        self.store.upsert(chunks, vectors, sparse)
 
         stored = self.files_dir / f"{doc_id}{path.suffix.lower()}"
         shutil.copyfile(path, stored)

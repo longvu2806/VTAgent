@@ -15,8 +15,11 @@ from qdrant_client import QdrantClient
 from core.chunking import split_pages_fixed, split_structured
 from core.context import assemble
 from core.ingestion import Ingestor
-from core.naive_rag import NaiveRAG
+from core.pipeline import RAGPipeline
 from core.prompting import NOT_FOUND
+from core.rerank import Reranker
+from core.retrieval import Retriever
+from core.sparse import BM25Encoder
 from core.stores import DocumentRegistry, VectorStore
 
 
@@ -59,6 +62,11 @@ def contract(tmp_path):
     return path
 
 
+def _rag(embedder, client, llm, collection="test", timeout_s=None, **retriever_options):
+    return RAGPipeline(Retriever(embedder, VectorStore(client, collection), top_k=5, **retriever_options), llm,
+                       timeout_s=timeout_s)
+
+
 def _ingestor(tmp_path, tokenizer, embedder, client, collection="test", chunker=None):
     return Ingestor(
         files_dir=tmp_path / "files",
@@ -76,7 +84,7 @@ def test_ingest_then_ask_maps_citation_to_chunk(tmp_path, word_tokenizer, embedd
     assert Path(record.stored_path).read_bytes() == contract.read_bytes()
 
     llm = FakeListChatModel(responses=["Phạt 0,05% mỗi ngày [S1]."])
-    answer = NaiveRAG(embedder, VectorStore(client, "test"), llm, top_k=5).ask("Mức phạt chậm giao hàng?")
+    answer = _rag(embedder, client, llm).ask("Mức phạt chậm giao hàng?")
 
     assert answer.text == "Phạt 0,05% mỗi ngày [S1]."
     [citation] = answer.citations
@@ -96,8 +104,8 @@ def test_structured_children_reach_the_llm_as_their_article(tmp_path, word_token
     assert _ingestor(tmp_path, word_tokenizer, embedder, client, chunker=chunker).ingest(path).n_chunks == 2
 
     llm = FakeListChatModel(responses=["Bị nghiêm cấm [S1]."])
-    rag = NaiveRAG(embedder, VectorStore(client, "test"), llm, top_k=5,
-                   assemble=partial(assemble, budget=2500, count_tokens=lambda t: len(t.split())))
+    rag = _rag(embedder, client, llm,
+               assemble=partial(assemble, budget=2500, count_tokens=lambda t: len(t.split())))
     answer = rag.ask("Lái xe có nồng độ cồn có bị cấm không?")
 
     assert len(answer.retrieved) == 2 and answer.retrieved[0].chunk.parent_id == answer.retrieved[1].chunk.parent_id
@@ -124,9 +132,42 @@ def test_same_file_is_indexed_again_for_another_collection(tmp_path, word_tokeni
     assert embedder.document_calls == 2
 
 
+def _hybrid(tmp_path, tokenizer, embedder, client, contract, llm, score):
+    """Ingest with BM25 sparse vectors, then a pipeline with hybrid search and reranking (R4)."""
+    bm25 = BM25Encoder(k1=1.2, b=0.75, avg_len=10)
+    Ingestor(tmp_path / "files", partial(split_pages_fixed, tokenizer=tokenizer, chunk_size=400, overlap=50),
+             embedder, VectorStore(client, "r3", sparse_idf=True), DocumentRegistry(tmp_path / "db.sqlite", "r3"),
+             sparse_encoder=bm25).ingest(contract)
+    retriever = Retriever(embedder, VectorStore(client, "r3", sparse_idf=True), top_k=5, sparse_encoder=bm25,
+                          rerank=Reranker(score, keep=5, threshold=0.5), candidates=40)
+    return RAGPipeline(retriever, llm)
+
+
+def test_hybrid_search_then_rerank_answers_with_the_reranker_scores(tmp_path, word_tokenizer, embedder, client,
+                                                                     contract):
+    llm = FakeListChatModel(responses=["Phạt 0,05% [S1]."])
+    rag = _hybrid(tmp_path, word_tokenizer, embedder, client, contract, llm, lambda q, ps: [0.8] * len(ps))
+
+    answer = rag.ask("Phạt 0,05% mỗi ngày?")
+
+    assert answer.text == "Phạt 0,05% [S1]." and answer.retrieved[0].score == 0.8
+    assert {"embed_query", "sparse_query", "search", "rerank", "generate"} <= set(answer.timings)
+
+
+def test_nothing_above_the_rerank_threshold_answers_not_found_without_calling_llm(tmp_path, word_tokenizer, embedder,
+                                                                                   client, contract):
+    llm = FakeListChatModel(responses=[])  # raises if invoked
+    rag = _hybrid(tmp_path, word_tokenizer, embedder, client, contract, llm, lambda q, ps: [0.1] * len(ps))
+
+    answer = rag.ask("Trọng tài ở đâu?")
+
+    assert (answer.text, answer.sources) == (NOT_FOUND, [])
+    assert "rerank" in answer.timings
+
+
 def test_empty_index_answers_not_found_without_calling_llm(embedder, client):
     llm = FakeListChatModel(responses=[])  # raises if invoked
-    answer = NaiveRAG(embedder, VectorStore(client, "empty"), llm, top_k=5).ask("Bất kỳ?")
+    answer = _rag(embedder, client, llm, "empty").ask("Bất kỳ?")
 
     assert answer.text == NOT_FOUND
     assert answer.citations == []
@@ -142,7 +183,7 @@ def test_ask_reports_stage_timings_and_ollama_stats(tmp_path, word_tokenizer, em
         reply_usage={"input_tokens": 1700, "output_tokens": 60, "total_tokens": 1760},
     )
 
-    answer = NaiveRAG(embedder, VectorStore(client, "test"), llm, top_k=5).ask("Mức phạt?")
+    answer = _rag(embedder, client, llm).ask("Mức phạt?")
 
     assert {"embed_query", "search", "generate"} <= set(answer.timings)
     assert answer.timings["llm_load"] == 1.0
@@ -157,7 +198,7 @@ def test_llm_is_stopped_at_the_time_limit(tmp_path, word_tokenizer, embedder, cl
     looping = AIMessage(content="Không được [S1]. " + "Tuy nhiên, xét lại [S1]. " * 50)
     llm = GenericFakeChatModel(messages=iter([looping]))
 
-    answer = NaiveRAG(embedder, VectorStore(client, "test"), llm, top_k=5, timeout_s=0).ask("Mức phạt?")
+    answer = _rag(embedder, client, llm, timeout_s=0).ask("Mức phạt?")
 
     assert answer.timed_out
     assert 0 < len(answer.text) < len(looping.content)

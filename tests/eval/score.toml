@@ -5,7 +5,7 @@
 [params]
 k = 5                     # cut-off for recall_at_k and ndcg_at_k
 evidence_match = 0.8      # share of an evidence quote a chunk must contain (chunk cuts may split quotes)
-group_by = ["category", "difficulty"]  # extra dataset columns to break scores down by
+group_by = ["category", "target", "difficulty"]  # extra dataset columns to break scores down by (absent ones are skipped)
 max_failures = 20         # failing questions listed per metric in the report
 # refusal_phrases = ["..."]  # default: the pipeline's fixed not-found answer
 

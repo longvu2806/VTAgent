@@ -19,7 +19,7 @@ from pathlib import Path
 from rich.progress import Progress
 
 from config import JUDGE_SETTINGS, settings
-from core.agent_factory import build_ingestor, build_naive_rag
+from core.agent_factory import build_ingestor, build_pipeline, build_registry
 from core.models import Answer, RetrievedChunk
 from observability import console, log, setup_logging
 from tests.eval.dataset import Dataset, EvalItem, load_dataset
@@ -38,24 +38,28 @@ def main() -> None:
     setup_logging()
     log.info("settings: %s", settings.model_dump_json())
     dataset = load_dataset(args.dataset)
+    _ingest(dataset)
+    corpus = sorted(r.source for r in build_registry().documents())
     run_dir = settings.data_dir / "eval_runs" / (args.name or f"{settings.collection}__{args.dataset.stem}")
-    meta = prepare_run_dir(run_dir, args.dataset, settings.model_dump(mode="json", exclude=JUDGE_SETTINGS))
+    meta = prepare_run_dir(run_dir, args.dataset, settings.model_dump(mode="json", exclude=JUDGE_SETTINGS), corpus)
     records, results = run_dir / meta["records"], run_dir / meta["results"]
     log.info("records → %s", records)
     log.info("results → %s", results)
-    _ingest(dataset)
-    run(dataset.items[: args.limit], build_naive_rag().ask, records, results)
+    run(dataset.items[: args.limit], build_pipeline().ask, records, results)
     console.print(f"[green]done[/]\n  records → {records}\n  results → {results}")
 
 
-def prepare_run_dir(run_dir: Path, dataset_path: Path, settings_dump: dict) -> dict:
-    """Create the run directory, or check that a resumed run keeps the same dataset and
-    settings. Returns the run's meta, which names its output files."""
+def prepare_run_dir(run_dir: Path, dataset_path: Path, settings_dump: dict, corpus: list[str]) -> dict:
+    """Create the run directory, or check that a resumed run keeps the same dataset, settings
+    and corpus (the documents indexed in the collection). Returns the run's meta, which names
+    its output files."""
     meta_path = run_dir / "meta.json"
-    meta = {"dataset": dataset_path.as_posix(), "settings": settings_dump}
+    meta = {"dataset": dataset_path.as_posix(), "corpus": corpus, "settings": settings_dump}
     if meta_path.exists():
         old = json.loads(meta_path.read_text(encoding="utf-8"))
         changed = [k for k in meta["settings"] if old["settings"].get(k) != meta["settings"][k]]
+        if old.get("corpus") != meta["corpus"]:
+            changed.insert(0, "corpus")
         if old["dataset"] != meta["dataset"]:
             changed.insert(0, "dataset")
         if changed:

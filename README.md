@@ -1,9 +1,10 @@
 # VTAgent
 
 Offline question answering over confidential Vietnamese documents, running on
-one laptop with Ollama. This repo currently implements the **R0 baseline**
-(naive RAG): fixed 400-token chunks, dense retrieval, top-5, answers with `[S#]`
-citations. Design: `doc/VTAgent_SAD_v1_0.docx`.
+one laptop with Ollama. This repo currently implements a single-pass RAG
+pipeline (retrieve, then answer with `[S#]` citations) and the retrieval
+configurations R0, R1, R3, R3′ and R4 of the ablation plan (see
+[Retrieval configurations](#retrieval-configurations)). Design: `doc/VTAgent_SAD_v1_0.docx`.
 
 ## Setup (Windows)
 
@@ -76,6 +77,33 @@ not found: missing.pdf
   `vtagent_docs_r0_300`). Documents are tracked per collection, so files already
   indexed with the old settings would otherwise be skipped.
 
+### Retrieval configurations
+
+Set in `.env` (SAD Table 6.5); every line of a preset is needed:
+
+| Config | Settings |
+|---|---|
+| R0: fixed 400-token chunks, dense search | `VTAGENT_CHUNKING=fixed`, `VTAGENT_COLLECTION=vtagent_docs_r0` |
+| R1: parent–child chunks (Điều / Khoản / Điểm) | `VTAGENT_CHUNKING=structured`, `VTAGENT_COLLECTION=vtagent_docs_r1` |
+| R3: R1 + BM25, fused with dense by RRF (40 + 40 candidates) | R1 chunking, `VTAGENT_SPARSE=bm25`, `VTAGENT_COLLECTION=vtagent_docs_r3` |
+| R3′: R1 + bge-m3 sparse weights instead of BM25 | R1 chunking, `VTAGENT_SPARSE=bge-m3`, `VTAGENT_COLLECTION=vtagent_docs_r3b` |
+| R4: R3 + cross-encoder reranking, 40 → 5 | R3 settings and `VTAGENT_RERANK=true` |
+
+- **Collections:** each sparse type has its own index, so switching type means switching
+  collection and ingesting again. A collection built for another configuration is refused
+  with an error instead of returning wrong results. R4 reranks at question time, so it reuses
+  the R3 collection.
+- **Variants:** `VTAGENT_NORMALIZE_NUMBERS=true` (BM25 only, needs its own collection) writes
+  each amount and date one way, so "160 triệu" matches "160.000.000".
+  `VTAGENT_RERANK_THRESHOLD` (0–1) drops chunks the reranker scores lower; if none is left, the
+  answer is "not found" without calling the LLM. Unset, the 5 best are always kept.
+- **First use downloads models:** R4 the reranker `onnx-community/bge-reranker-v2-m3-ONNX`
+  int8 (571 MB, Hugging Face cache); R3′ the bge-m3 int8 ONNX model through `bge-m3-lite`
+  (about 600 MB, under `~/.cache/bge-m3-lite`). Both run on the CPU with onnxruntime. Once
+  downloaded, set `HF_HUB_OFFLINE=1` and `BGE_M3_LITE_OFFLINE=1` for offline processing.
+- R3′ and R4 together keep two ONNX models in RAM next to Ollama's; check the memory headroom
+  before combining them.
+
 ### 2. Ask questions
 
 ```bash
@@ -134,6 +162,10 @@ python -m tests.eval.score data/eval_runs/r0 --only faithfulness,factual_correct
 The metrics, how each is computed and which are primary are specified in
 [tests/eval/METRICS.md](tests/eval/METRICS.md).
 
+- **Datasets:** `data/test/luat_gtdb_2008_eval100.csv` (one law; chunking and generation) and
+  `data/test/multidoc_retrieval_eval100.csv` (9 documents; numbers, document numbers, dates and
+  near-duplicate provisions that dense search misses — its `target` column names the configuration
+  expected to fix each question: `r3`, `r4`, `normalization`, `structure`, `control`, `trap`).
 - **Dataset format:** a CSV with the columns documented in `tests/eval/dataset.py`.
   Only `id` and `question` are required; metrics that need a missing column are
   skipped and the report says why. Documents named in the `doc` column (next to the
