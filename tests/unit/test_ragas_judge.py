@@ -5,7 +5,7 @@ import pytest
 from core.prompting import NOT_FOUND
 from tests.eval.dataset import EvalItem
 from tests.eval.metrics import DEFAULT_PARAMS
-from tests.eval.ragas_judge import DEFAULT_JUDGE, _embeddings, _llm, adapt_prompts, judge
+from tests.eval.ragas_judge import DEFAULT_JUDGE, _embeddings, _llm, adapt_prompts, cache_tag, judge
 from tests.eval.runs import RunRecord
 
 CONTEXTS = [{"chunk_id": "c1", "text": "Người đủ 24 tuổi trở lên được lái xe khách 10 đến 30 chỗ."}]
@@ -131,3 +131,10 @@ def test_openrouter_options_go_only_to_openrouter():
     assert openrouter == {"thinking": {"type": "disabled"}, "reasoning": {"enabled": False},
                           "provider": {"order": ["deepseek"], "allow_fallbacks": False}}
     assert deepseek == {"thinking": {"type": "disabled"}}
+
+
+def test_cache_tag_ignores_max_tokens_but_not_the_model():
+    cfg = {**DEFAULT_JUDGE, "max_tokens": 4096}
+
+    assert cache_tag(cfg) == cache_tag({**cfg, "max_tokens": 8192})  # raising the cap keeps cached verdicts
+    assert cache_tag(cfg) != cache_tag({**cfg, "model": "other"})

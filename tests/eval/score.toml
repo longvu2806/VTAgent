@@ -12,7 +12,7 @@ max_failures = 20         # failing questions listed per metric in the report
 [judge]                   # LLM judge of the RAGAS metrics; URL and API key are in .env
 model = "deepseek-flash"   # DeepSeek API id (OpenRouter: "deepseek/deepseek-v4-flash")
 temperature = 0.0
-max_tokens = 4096         # RAGAS's default 1024 truncates long faithfulness verdicts
+max_tokens = 16384        # RAGAS's default 1024, then 4096 and 8192, truncated the verdicts of long answers
 max_concurrency = 8       # parallel judge calls
 extra_body = { thinking = { type = "disabled" } }  # DeepSeek thinks by default: off
 # OpenRouter only:

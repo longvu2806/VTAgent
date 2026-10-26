@@ -383,7 +383,7 @@ and what was changed:
 | Answers carry `[S#]` labels | The judge may extract meaningless claims such as "according to S1" | Labels are stripped before judging |
 | Answers cite sources ("Theo Điều 19 của Luật ...") that reference answers do not repeat | The judge attached the citation to every claim and rejected correct claims for it alone (question 39, verbatim-correct, scored 0; 7 of 80 questions affected) | `factual_correctness` prompts leave source attributions out and judge content only (`ATTRIBUTION_NOTE`); `faithfulness` still checks citations against the context, so a wrong article number counts there |
 | A refusal yields a statement that cannot be supported | `faithfulness` would score 0 for an answer that claims nothing | `faithfulness` skips refusals |
-| RAGAS's default limit of 1024 output tokens | Long faithfulness verdicts get truncated into invalid JSON | `max_tokens = 4096` |
+| RAGAS's default limit of 1024 output tokens | Long faithfulness verdicts get truncated into invalid JSON | `max_tokens = 4096`, raised to 16384 when the verdicts of 2,000–4,000-character enumeration answers (multi-document set) overflowed 4096 and 8192. `max_tokens` is not part of the cache key: a cut verdict fails and is never cached |
 
 `BasePrompt.adapt()` (LLM translation of the examples) is not used: it re-translates on
 every run, so the prompts would not be fixed. The notes are versioned by
@@ -461,7 +461,7 @@ metric), `gold_pages` (shown in the failure list), `category` / `difficulty` (gr
 | | `group_by` | `["category", "difficulty"]` | per-group tables |
 | | `max_failures` | 20 | failing questions listed per metric |
 | `[judge]` | `model` | `deepseek/deepseek-v4-flash` | judge metrics |
-| | `temperature`, `max_tokens`, `reasoning`, `providers`, `max_concurrency` | 0, 4096, false, [], 8 | judge metrics |
+| | `temperature`, `max_tokens`, `reasoning`, `providers`, `max_concurrency` | 0, 16384, false, [], 8 | judge metrics |
 | `[metrics]` | one boolean per metric | true | switches; unlisted metrics are on |
 
 Command line: `--only a,b` scores just those, `--skip a,b` drops them; both accept the
