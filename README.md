@@ -133,6 +133,10 @@ tối đa 8% [S1].
 - Each `ask` is independent: the R0 baseline has no conversation memory, so a
   follow-up must repeat its context ("phạt *chậm giao hàng* tối đa bao nhiêu?",
   not "tối đa bao nhiêu?").
+- **Answer prompt:** `VTAGENT_PROMPT=v2` (default) or `v1` (the original); v2 adds rules
+  against the answer errors found in the R4 run: items listed for a range they only partly
+  match, answers longer than asked, documents named by their file name, whole questions
+  refused when the sources answer part of them. Both are in `core/prompting.py`.
 
 ### 3. Run the tests
 
@@ -174,9 +178,17 @@ The metrics, how each is computed and which are primary are specified in
   answers, citations, retrieved pages, total latency and latency per stage, token
   counts) and `records_<time>.jsonl` (full chunk texts, read by phase 2). `<time>` is
   when the run was created (`YYYYMMDD-HHMMSS`); resuming keeps the same files.
+- **Chunk texts in the CSV:** columns `S1`…`S5` hold the sources exactly as the LLM read them
+  (R1+: after children were swapped for their article), matching the `[S#]` labels of the
+  answer; `hit_1`…`hit_5` hold the retrieved chunks by rank with their score. Each cell starts
+  with the file, page and section. Comparing the two shows whether a wrong answer came from
+  retrieval or from text the article expansion added. Runs generated before these columns
+  existed get them with `python -m tests.eval.runs data/eval_runs/<name>`, which rewrites the
+  CSV from the records without any model.
 - **Interrupted?** Rerun the same command: answered questions are skipped and failed
   ones retried. Changing settings in `.env` requires a new `--name`, so one run never
-  mixes two configurations.
+  mixes two configurations. Runs from before the `prompt` setting existed cannot be resumed
+  for the same reason; they used prompt v1.
 - **Time limit:** an answer still generating after `VTAGENT_LLM_TIMEOUT_S` (300 s) is
   stopped (the model sometimes loops). It is kept as far as it got, marked `timed_out`,
   scored like any answer and listed in the report; it is not retried.

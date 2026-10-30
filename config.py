@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     llm_num_ctx: int = 8192  # Ollama's default context silently truncates prompts
     llm_temperature: float = 0.0
     llm_timeout_s: float = 300  # stops an answer stuck in a repetition loop
+    prompt: Literal["v1", "v2"] = "v2"  # answer prompt, core/prompting.py SYSTEM_PROMPTS
     embedding_model: str = "bge-m3"
     tokenizer_name: str = "BAAI/bge-m3"  # must match embedding_model
 

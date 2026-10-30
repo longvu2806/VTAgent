@@ -1,5 +1,5 @@
 from core.models import Chunk, RetrievedChunk
-from core.prompting import NOT_FOUND, build_messages, extract_citations
+from core.prompting import NOT_FOUND, SYSTEM_PROMPTS, build_messages, extract_citations
 
 
 def _source(i: int, page: int | None = None) -> RetrievedChunk:
@@ -14,6 +14,12 @@ def test_sources_are_labelled_in_order_with_page():
     assert NOT_FOUND in system
     assert human.index("[S1] hd.pdf · page 3\ntext 1") < human.index("[S2] hd.pdf\ntext 2") < human.index("[S3]")
     assert human.endswith("Question: Q?")
+
+
+def test_the_given_system_prompt_is_used_and_v1_is_the_default():
+    assert build_messages("Q?", SOURCES)[0] == ("system", SYSTEM_PROMPTS["v1"])
+    assert build_messages("Q?", SOURCES, SYSTEM_PROMPTS["v2"])[0] == ("system", SYSTEM_PROMPTS["v2"])
+    assert all(NOT_FOUND in prompt for prompt in SYSTEM_PROMPTS.values())  # the refusal must stay verbatim
 
 
 def test_citations_follow_first_appearance():

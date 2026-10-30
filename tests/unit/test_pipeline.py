@@ -175,6 +175,26 @@ def test_empty_index_answers_not_found_without_calling_llm(embedder, client):
     assert set(answer.timings) == {"embed_query", "search"}
 
 
+class RecordingChatModel(FakeListChatModel):
+    """Keeps the messages of every call."""
+
+    calls: list = []
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        self.calls.append(messages)
+        yield from super()._stream(messages, stop, run_manager, **kwargs)
+
+
+def test_the_pipeline_sends_its_system_prompt(tmp_path, word_tokenizer, embedder, client, contract):
+    _ingestor(tmp_path, word_tokenizer, embedder, client).ingest(contract)
+    llm = RecordingChatModel(responses=["Phạt 0,05% [S1]."], calls=[])
+
+    RAGPipeline(Retriever(embedder, VectorStore(client, "test"), top_k=5), llm, system_prompt="Answer briefly.").ask("Phạt?")
+
+    [messages] = llm.calls
+    assert (messages[0].type, messages[0].content) == ("system", "Answer briefly.")
+
+
 def test_ask_reports_stage_timings_and_ollama_stats(tmp_path, word_tokenizer, embedder, client, contract):
     _ingestor(tmp_path, word_tokenizer, embedder, client).ingest(contract)
     llm = OllamaLikeChatModel(

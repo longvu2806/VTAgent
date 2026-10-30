@@ -113,7 +113,7 @@ def render_markdown(report: Report, dataset: Dataset, records: dict[str, RunReco
         f" ({len(report.errors)} errors, {len(report.missing)} not generated) |",
         f"| Generated | {meta.get('created_at', '?')} |",
         f"| Scored | {datetime.now(timezone.utc).isoformat(timespec='seconds')} |",
-        f"| Models | {s['llm_model']} · {s['embedding_model']} |",
+        f"| Models | {s['llm_model']} · {s['embedding_model']} · prompt {s.get('prompt', 'v1')} |",  # older runs: v1
         f"| Retrieval | collection `{s['collection']}` · {_chunking(s)} · {_search(s)} · top-{s['top_k']} |",
         *([f"| Judge | {judge_line} |"] if judge_line else []),
         "",

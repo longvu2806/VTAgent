@@ -11,6 +11,7 @@ from core.prompting import NOT_FOUND
 from tests.eval.dataset import load_dataset
 from tests.eval.generate import prepare_run_dir, run
 from tests.eval.metrics import select_metrics, score_run
+from tests.eval.runs import main as rewrite_results
 from tests.eval.runs import read_records
 from tests.eval.score import render_markdown, write_scores
 
@@ -52,6 +53,48 @@ def test_generate_writes_records_and_results_csv(tmp_path, dataset):
     assert rows[0]["generate_s"] == "2.0" and rows[0]["input_tokens"] == "900"
     assert {"latency_s", "embed_query_s"} <= set(rows[0])
     assert (rows[0]["timed_out"], rows[1]["timed_out"]) == ("", "yes")
+
+
+def _structured_answer(question: str) -> Answer:
+    """R1+: the retrieved child reached the LLM as its article."""
+    if question.startswith("Có"):
+        return Answer(NOT_FOUND, [], [])
+    child = Chunk("c1", "d", "law.pdf", 3, 0, "1. Phạt 0.05% mỗi ngày.", "Điều 5 › Khoản 1", "p1")
+    article = Chunk("c1", "d", "law.pdf", 3, 0, "Điều 5. Phạt vi phạm\n1. Phạt 0.05% mỗi ngày.", "Điều 5", "p1")
+    return Answer("Phạt 0.05% [S1].", [Citation("S1", article)], [RetrievedChunk(article, 0.95)],
+                  retrieved=[RetrievedChunk(child, 0.95)])
+
+
+def test_results_csv_shows_the_sources_and_the_retrieved_chunks(tmp_path, dataset):
+    run(dataset.items, _structured_answer, tmp_path / RECORDS, tmp_path / RESULTS)
+
+    with (tmp_path / RESULTS).open(encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["S1"] == "law.pdf p.3 · Điều 5\nĐiều 5. Phạt vi phạm\n1. Phạt 0.05% mỗi ngày."
+    assert rows[0]["hit_1"] == "1. law.pdf p.3 · Điều 5 › Khoản 1 (0.950)\n1. Phạt 0.05% mỗi ngày."
+    assert (rows[1]["S1"], rows[1]["hit_1"]) == ("", "")  # the refusal had no sources
+    assert list(rows[0]).index("hit_1") == list(rows[0]).index("S1") + 1
+
+
+def test_without_context_assembly_the_hits_are_the_sources(tmp_path, dataset):
+    run(dataset.items, _answer, tmp_path / RECORDS, tmp_path / RESULTS)  # R0: retrieved left empty
+
+    with (tmp_path / RESULTS).open(encoding="utf-8-sig") as f:
+        row = next(csv.DictReader(f))
+    assert row["hit_1"] == "1. law.pdf p.3 (0.900)\nBên A chịu phạt 0.05% mỗi ngày chậm."
+
+
+def test_results_csv_is_rewritten_from_the_records(tmp_path, dataset, monkeypatch):
+    run_dir = tmp_path / "run"
+    meta = prepare_run_dir(run_dir, dataset.path, SETTINGS, CORPUS)
+    run(dataset.items, _structured_answer, run_dir / meta["records"], run_dir / meta["results"])
+    (run_dir / meta["results"]).unlink()
+
+    monkeypatch.setattr("sys.argv", ["runs", str(run_dir)])
+    rewrite_results()
+
+    with (run_dir / meta["results"]).open(encoding="utf-8-sig") as f:
+        assert next(csv.DictReader(f))["S1"].startswith("law.pdf p.3 · Điều 5\n")
 
 
 def test_timed_out_question_is_kept_and_not_retried(tmp_path, dataset):
@@ -132,15 +175,18 @@ def test_score_report_end_to_end(tmp_path, dataset):
     assert "## By category" in markdown and "## By target" not in markdown
     assert report.timed_out == ["2"] and "### timed out: 1 questions" in markdown
     assert "fixed chunks 400/50 tokens · dense search · top-5 |" in markdown
+    assert "| Models | fake · fake · prompt v1 |" in markdown  # runs from before the setting used v1
 
 
 def test_report_names_the_hybrid_search_and_reranking(tmp_path, dataset):
-    settings = {**SETTINGS, "sparse": "bm25", "normalize_numbers": True, "rerank": True, "rerank_threshold": 0.3}
+    settings = {**SETTINGS, "sparse": "bm25", "normalize_numbers": True, "rerank": True, "rerank_threshold": 0.3,
+                "prompt": "v2"}
     report = score_run(dataset, {}, [], {})
 
     markdown = render_markdown(report, dataset, {}, {"settings": settings}, tmp_path, [], {})
 
     assert "dense + bm25 search, RRF, numbers normalized · reranked, threshold 0.3 · top-5 |" in markdown
+    assert "· prompt v2 |" in markdown
 
 
 def test_per_question_scores_csv(tmp_path, dataset):
