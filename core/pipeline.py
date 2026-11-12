@@ -9,7 +9,7 @@ from contextlib import closing
 from typing import TYPE_CHECKING
 
 from core.models import Answer
-from core.prompting import NOT_FOUND, build_messages, extract_citations
+from core.prompting import NOT_FOUND, SYSTEM_PROMPTS, build_messages, extract_citations
 from observability import log, timed
 
 if TYPE_CHECKING:
@@ -23,10 +23,12 @@ _OLLAMA_DURATIONS = {"load_duration": "llm_load", "prompt_eval_duration": "llm_p
 
 
 class RAGPipeline:
-    def __init__(self, retriever: Retriever, llm: BaseChatModel, timeout_s: float | None = None):
+    def __init__(self, retriever: Retriever, llm: BaseChatModel, timeout_s: float | None = None,
+                 system_prompt: str = SYSTEM_PROMPTS["v1"]):
         self.retriever = retriever
         self.llm = llm
         self.timeout_s = timeout_s  # None: no limit on the LLM step
+        self.system_prompt = system_prompt
 
     def ask(self, question: str) -> Answer:
         timings: dict[str, float] = {}
@@ -36,7 +38,7 @@ class RAGPipeline:
             return Answer(NOT_FOUND, citations=[], sources=[], timings=timings, retrieved=retrieval.hits)
 
         with timed("generate", timings):
-            reply, timed_out = self._generate(build_messages(question, sources))
+            reply, timed_out = self._generate(build_messages(question, sources, self.system_prompt))
         if timed_out:
             log.warning("LLM stopped after %.0fs time limit; the answer is incomplete", self.timeout_s)
         for key, stage in _OLLAMA_DURATIONS.items():

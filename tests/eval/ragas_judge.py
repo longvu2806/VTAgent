@@ -65,7 +65,7 @@ NEEDS_CONTEXTS = ("context_precision", "context_recall", "faithfulness")
 DEFAULT_JUDGE = {
     "model": "deepseek/deepseek-v4-flash",
     "temperature": 0.0,
-    "max_tokens": 4096,  # RAGAS's default 1024 truncates long faithfulness verdicts
+    "max_tokens": 16384,  # RAGAS's default 1024 truncates long faithfulness verdicts; 4096 and 8192 the longest answers
     "reasoning": False,  # OpenRouter only
     "providers": [],  # OpenRouter only
     "extra_body": {},  # other APIs: their own request fields (e.g. to switch thinking off)
@@ -163,10 +163,11 @@ def adapt_prompts(metric_obj: object) -> None:
 
 
 def cache_tag(judge_cfg: dict) -> str:
-    """Everything that changes a verdict besides the inputs."""
+    """Everything that changes a verdict besides the inputs. Not max_tokens: it only cuts the
+    output, and a cut verdict fails and is not cached, so a cached one never depended on it."""
     import ragas
 
-    settings = {k: judge_cfg[k] for k in ("model", "temperature", "max_tokens", "reasoning", "providers", "extra_body")}
+    settings = {k: judge_cfg[k] for k in ("model", "temperature", "reasoning", "providers", "extra_body")}
     return json.dumps({**settings, "prompt_version": PROMPT_VERSION, "ragas": ragas.__version__}, sort_keys=True)
 
 

@@ -12,6 +12,7 @@ from core.chunking import split_pages_fixed, split_structured
 from core.context import assemble
 from core.ingestion import Ingestor
 from core.pipeline import RAGPipeline
+from core.prompting import SYSTEM_PROMPTS
 from core.rerank import Reranker, onnx_cross_encoder
 from core.retrieval import Retriever
 from core.sparse import BgeM3SparseEncoder, BM25Encoder
@@ -78,7 +79,7 @@ def build_pipeline(s: Settings = default_settings) -> RAGPipeline:
     retriever = Retriever(_embedder(s), _vector_store(s), s.top_k, assemble=assembler,
                           sparse_encoder=sparse_encoder(s), rerank=_reranker(s) if s.rerank else None,
                           candidates=CANDIDATES)
-    return RAGPipeline(retriever, llm, timeout_s=s.llm_timeout_s)
+    return RAGPipeline(retriever, llm, timeout_s=s.llm_timeout_s, system_prompt=SYSTEM_PROMPTS[s.prompt])
 
 
 def sparse_encoder(s: Settings) -> SparseEncoder | None:
