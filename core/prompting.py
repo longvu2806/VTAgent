@@ -31,6 +31,15 @@ SYSTEM_PROMPTS = {
 - Say where the answer is (section, article, clause or page), as the source shows it.
 - Answer in the language of the question.""",
 }
+# v3: v2 without "direct answer first", which made the model commit to a conclusion before matching
+# it to the sources (wrong licence class, wrong threshold), and cut details the question needed.
+SYSTEM_PROMPTS["v3"] = SYSTEM_PROMPTS["v2"].replace(
+    "- Answer only what the question asks. Give the direct answer first, then only the details needed to support it.",
+    """- Answer only what the question asks, with only the details needed to support the answer.
+- When the answer depends on matching the question to the sources (which item, category, threshold, range
+  or condition applies), reason before you conclude: first quote the source words that match, with their
+  label, then state the conclusion that follows from them. Put the conclusion last.""",
+)
 
 # "[S1]" or "[S1, S3]"
 _LABEL_GROUP = re.compile(r"\[(S\d+(?:\s*,\s*S\d+)*)\]")

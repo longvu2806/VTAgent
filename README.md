@@ -136,7 +136,8 @@ tối đa 8% [S1].
 - **Answer prompt:** `VTAGENT_PROMPT=v2` (default) or `v1` (the original); v2 adds rules
   against the answer errors found in the R4 run: items listed for a range they only partly
   match, answers longer than asked, documents named by their file name, whole questions
-  refused when the sources answer part of them. Both are in `core/prompting.py`.
+  refused when the sources answer part of them. `v3` is v2 with the conclusion stated after the
+  source words it rests on, instead of first. All are in `core/prompting.py`.
 
 ### 3. Run the tests
 

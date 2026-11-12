@@ -20,6 +20,7 @@ def test_the_given_system_prompt_is_used_and_v1_is_the_default():
     assert build_messages("Q?", SOURCES)[0] == ("system", SYSTEM_PROMPTS["v1"])
     assert build_messages("Q?", SOURCES, SYSTEM_PROMPTS["v2"])[0] == ("system", SYSTEM_PROMPTS["v2"])
     assert all(NOT_FOUND in prompt for prompt in SYSTEM_PROMPTS.values())  # the refusal must stay verbatim
+    assert "direct answer first" not in SYSTEM_PROMPTS["v3"] and "conclusion last" in SYSTEM_PROMPTS["v3"]
 
 
 def test_citations_follow_first_appearance():
