@@ -10,6 +10,7 @@ from config import Settings
 from config import settings as default_settings
 from core.chunking import split_pages_fixed, split_structured
 from core.context import assemble
+from core.graph import QueryGraph
 from core.ingestion import Ingestor
 from core.pipeline import RAGPipeline
 from core.prompting import SYSTEM_PROMPTS
@@ -31,6 +32,7 @@ BM25_K1, BM25_B = 1.2, 0.75  # standard BM25 parameters
 BM25_AVG_LEN = 279  # mean BM25 tokens per child chunk, measured on the 9-document test corpus
 RERANK_MAX_TOKENS = 512  # question + child chunk (children are at most 400 tokens)
 RERANK_BATCH = 8
+MAX_ROUNDS = 2  # drafts per question: the first and one retry (SAD Table 9.1)
 
 
 def build_ingestor(s: Settings = default_settings) -> Ingestor:
@@ -80,6 +82,11 @@ def build_pipeline(s: Settings = default_settings) -> RAGPipeline:
                           sparse_encoder=sparse_encoder(s), rerank=_reranker(s) if s.rerank else None,
                           candidates=CANDIDATES)
     return RAGPipeline(retriever, llm, timeout_s=s.llm_timeout_s, system_prompt=SYSTEM_PROMPTS[s.prompt])
+
+
+def build_query_graph(s: Settings = default_settings) -> QueryGraph:
+    """The multi-agent graph over the configured pipeline; its stub nodes keep the pipeline's answers."""
+    return QueryGraph(build_pipeline(s), max_rounds=MAX_ROUNDS)
 
 
 def sparse_encoder(s: Settings) -> SparseEncoder | None:

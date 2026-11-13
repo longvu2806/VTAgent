@@ -138,6 +138,9 @@ tối đa 8% [S1].
   match, answers longer than asked, documents named by their file name, whole questions
   refused when the sources answer part of them. `v3` is v2 with the conclusion stated after the
   source words it rests on, instead of first. All are in `core/prompting.py`.
+- **Agent graph:** questions go through a LangGraph graph (`core/graph.py`): coordinator → RAG
+  agent → validator → answer. The coordinator and validator are still stubs (every question goes
+  to RAG, every draft is accepted), so the answers are those of the single-pass pipeline.
 
 ### 3. Run the tests
 

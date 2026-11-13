@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessageChunk
 
-    from core.retrieval import Retriever
+    from core.retrieval import Retrieval, Retriever
 
 # Ollama reports these durations (nanoseconds) for every call.
 _OLLAMA_DURATIONS = {"load_duration": "llm_load", "prompt_eval_duration": "llm_prefill", "eval_duration": "llm_decode"}
@@ -32,7 +32,12 @@ class RAGPipeline:
 
     def ask(self, question: str) -> Answer:
         timings: dict[str, float] = {}
-        retrieval = self.retriever.retrieve(question, timings)
+        return self.answer(question, self.retriever.retrieve(question, timings), timings)
+
+    def answer(self, question: str, retrieval: Retrieval, timings: dict[str, float] | None = None) -> Answer:
+        """Answer from evidence already retrieved, without searching again. ``timings`` holds the
+        stages already spent on the question (retrieval); the generation stages are added to a copy."""
+        timings = dict(timings or {})
         sources = retrieval.sources
         if not sources:
             return Answer(NOT_FOUND, citations=[], sources=[], timings=timings, retrieved=retrieval.hits)

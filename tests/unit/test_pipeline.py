@@ -15,10 +15,11 @@ from qdrant_client import QdrantClient
 from core.chunking import split_pages_fixed, split_structured
 from core.context import assemble
 from core.ingestion import Ingestor
+from core.models import Chunk, RetrievedChunk
 from core.pipeline import RAGPipeline
 from core.prompting import NOT_FOUND
 from core.rerank import Reranker
-from core.retrieval import Retriever
+from core.retrieval import Retrieval, Retriever
 from core.sparse import BM25Encoder
 from core.stores import DocumentRegistry, VectorStore
 
@@ -173,6 +174,27 @@ def test_empty_index_answers_not_found_without_calling_llm(embedder, client):
     assert answer.citations == []
     assert answer.sources == []
     assert set(answer.timings) == {"embed_query", "search"}
+
+
+def test_answer_uses_the_given_evidence_without_searching(embedder, client):
+    chunk = Chunk("c1", "d", "hd.docx", None, 0, "Điều 5. Bên B chịu phạt 0,05% mỗi ngày chậm giao hàng.")
+    evidence = Retrieval(hits=[RetrievedChunk(chunk, 0.9)], sources=[RetrievedChunk(chunk, 0.9)])
+    llm = FakeListChatModel(responses=["Phạt 0,05% mỗi ngày [S1]."])
+
+    answer = _rag(embedder, client, llm, "empty").answer("Mức phạt?", evidence, {"rerank": 8.0})
+
+    assert answer.text == "Phạt 0,05% mỗi ngày [S1]."
+    assert answer.citations[0].chunk is chunk
+    assert "search" not in answer.timings  # the empty index was never searched
+    assert {"rerank", "generate"} <= set(answer.timings)
+
+
+def test_answer_without_evidence_is_not_found_without_calling_llm(embedder, client):
+    llm = FakeListChatModel(responses=[])  # raises if invoked
+
+    answer = _rag(embedder, client, llm).answer("Bất kỳ?", Retrieval(hits=[], sources=[]))
+
+    assert (answer.text, answer.sources, answer.timings) == (NOT_FOUND, [], {})
 
 
 class RecordingChatModel(FakeListChatModel):
