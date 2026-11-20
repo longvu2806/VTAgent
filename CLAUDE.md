@@ -24,7 +24,8 @@ Priority is accuracy over latency; ceiling is p95 < 3 min per query.
 ## Stack
 
 Ollama native (`qwen3.5:9b` answers, `qwen3.5:4b` routing/verification, `bge-m3`
-embeddings), Qdrant, SQLite. Later: LangGraph (multi-agent), Streamlit (UI).
+embeddings), Qdrant, SQLite. Later: LangGraph (multi-agent), FastAPI. Web UI: React +
+Vite in `web/`, built against a browser mock of the API (MSW) until FastAPI lands.
 Qdrant runs embedded under `data/qdrant` until Docker is installed; set
 `VTAGENT_QDRANT_URL` to switch to a server.
 
@@ -51,4 +52,9 @@ python main.py ask "Mức phạt chậm giao hàng?"  # ask a question
 # OpenRouter key (VTAGENT_JUDGE_API_KEY) + Ollama for the RAGAS metrics
 python -m tests.eval.generate data/test/luat_gtdb_2008_eval100.csv --name r0
 python -m tests.eval.score data/eval_runs/r0 --skip ragas
+
+# Web UI (needs pnpm); the browser mock is on while VITE_MOCK=1 (web/.env.development)
+cd web && pnpm dev     # http://127.0.0.1:5173
+cd web && pnpm test    # offline unit tests (Vitest)
+cd web && pnpm build   # static files in web/dist
 ```

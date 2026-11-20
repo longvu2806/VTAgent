@@ -138,6 +138,9 @@ tối đa 8% [S1].
   match, answers longer than asked, documents named by their file name, whole questions
   refused when the sources answer part of them. `v3` is v2 with the conclusion stated after the
   source words it rests on, instead of first. All are in `core/prompting.py`.
+- **Agent graph:** questions go through a LangGraph graph (`core/graph.py`): coordinator → RAG
+  agent → validator → answer. The coordinator and validator are still stubs (every question goes
+  to RAG, every draft is accepted), so the answers are those of the single-pass pipeline.
 
 ### 3. Run the tests
 
@@ -213,3 +216,24 @@ The metrics, how each is computed and which are primary are specified in
   One scoring of 80 answerable questions costs about $0.3–0.6. Verdicts are cached in
   the run directory (`judge_cache.jsonl`), so rescoring is free. The eval dataset is
   public law text; the judge is used only for evaluation, never in the running system.
+
+## Web UI
+
+`web/` holds the browser interface (React + Vite). Until the FastAPI backend exists, it
+runs against a mock of the API inside the browser (MSW) with invented sample documents,
+so it needs neither Ollama nor Python.
+
+```bash
+cd web
+pnpm install
+pnpm dev     # http://127.0.0.1:5173 with the browser mock
+pnpm test    # offline unit tests (Vitest)
+pnpm build   # static files in web/dist, without the mock
+```
+
+- **Sample questions** for every answer path (verified, rewritten in round 2, partial, not
+  found, calculation, error) are listed on the new-chat page.
+- **Mock data** lives in memory: a page reload brings back the sample documents and
+  conversations.
+- **Real API:** set `VITE_MOCK=0` in `web/.env.development.local`; the dev server then
+  proxies `/api` to `http://127.0.0.1:8000`.

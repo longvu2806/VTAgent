@@ -4,3 +4,5 @@ __pycache__/
 .env
 data/
 ~$*
+web/node_modules/
+web/dist/

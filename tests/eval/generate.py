@@ -19,7 +19,7 @@ from pathlib import Path
 from rich.progress import Progress
 
 from config import JUDGE_SETTINGS, settings
-from core.agent_factory import build_ingestor, build_pipeline, build_registry
+from core.agent_factory import build_ingestor, build_query_graph, build_registry
 from core.models import Answer, RetrievedChunk
 from observability import console, log, setup_logging
 from tests.eval.dataset import Dataset, EvalItem, load_dataset
@@ -45,7 +45,7 @@ def main() -> None:
     records, results = run_dir / meta["records"], run_dir / meta["results"]
     log.info("records → %s", records)
     log.info("results → %s", results)
-    run(dataset.items[: args.limit], build_pipeline().ask, records, results)
+    run(dataset.items[: args.limit], build_query_graph().ask, records, results)
     console.print(f"[green]done[/]\n  records → {records}\n  results → {results}")
 
 
