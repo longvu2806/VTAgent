@@ -5,20 +5,25 @@
 #   bash deploy/runpod/start.sh                       # qwen3.5-9b
 #   LLM_MODEL=... LLM_MEMORY=0.75 bash deploy/runpod/start.sh   # another answer model
 #
-# Memory on a 24 GB card (RTX A5000): LLM ~62%, bge-m3 ~10%, and ~2 GB left for the
-# onnxruntime reranker that runs inside the benchmark process.
+# Memory on a 24 GB card (RTX A5000): LLM ~70% (FP8 weights ~10.7 GB, the rest cache),
+# bge-m3 ~10%, and ~4 GB left for the onnxruntime reranker inside the benchmark process.
 set -euo pipefail
 
 W="${WORKSPACE:-/workspace}"
 LLM_MODEL="${LLM_MODEL:-Qwen/Qwen3.5-9B}"
-LLM_MEMORY="${LLM_MEMORY:-0.62}"
+LLM_MEMORY="${LLM_MEMORY:-0.70}"
 EMBED_MEMORY="${EMBED_MEMORY:-0.10}"
 MAX_LEN="${MAX_LEN:-16384}"  # prompt (~3k tokens) + thinking + answer
+# Requests decoded at once. Qwen3.5's linear-attention layers need one cache block per
+# sequence, and vLLM's default of 256 does not fit in 24 GB.
+MAX_SEQS="${MAX_SEQS:-32}"
 export HF_HOME="$W/hf"
 mkdir -p "$W/logs"
 
-wait_for() {  # name, url, log
+wait_for() {  # name, url, log; the server is the last background process
+  local pid=$!
   for _ in $(seq 1 180); do
+    if ! kill -0 "$pid" 2> /dev/null; then break; fi
     if curl -sf "$2" > /dev/null; then echo "$1 ready"; return 0; fi
     sleep 5
   done
@@ -29,14 +34,16 @@ QDRANT__STORAGE__STORAGE_PATH="$W/qdrant/storage" QDRANT__SERVICE__HOST=127.0.0.
   nohup "$W/qdrant/qdrant" > "$W/logs/qdrant.log" 2>&1 &
 wait_for qdrant http://127.0.0.1:6333/readyz "$W/logs/qdrant.log"
 
+# Ports: RunPod's own nginx holds 8001 (and 3001, 7270, 7861, 8081, 8888, 9091) on its images.
+
 # No official FP8 checkpoint: vLLM quantizes the weights to FP8 as it loads them (on Ampere a
 # weight-only kernel). The qwen3 reasoning parser keeps the thinking out of the answer text;
 # whether to think is chosen per request (VTAGENT_LLM_THINKING).
-nohup "$W/venv-vllm/bin/vllm" serve "$LLM_MODEL" --host 127.0.0.1 --port 8001 \
+nohup "$W/venv-vllm/bin/vllm" serve "$LLM_MODEL" --host 127.0.0.1 --port 8000 \
   --quantization fp8 --gpu-memory-utilization "$LLM_MEMORY" --max-model-len "$MAX_LEN" \
-  --reasoning-parser qwen3 > "$W/logs/vllm-llm.log" 2>&1 &
+  --max-num-seqs "$MAX_SEQS" --reasoning-parser qwen3 > "$W/logs/vllm-llm.log" 2>&1 &
 # One at a time: each vLLM sizes its cache from the memory free when it starts.
-wait_for "vllm $LLM_MODEL" http://127.0.0.1:8001/health "$W/logs/vllm-llm.log"
+wait_for "vllm $LLM_MODEL" http://127.0.0.1:8000/health "$W/logs/vllm-llm.log"
 
 nohup "$W/venv-vllm/bin/vllm" serve BAAI/bge-m3 --host 127.0.0.1 --port 8002 \
   --gpu-memory-utilization "$EMBED_MEMORY" > "$W/logs/vllm-embed.log" 2>&1 &

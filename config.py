@@ -25,12 +25,18 @@ class Settings(BaseSettings):
     # to every request to a server that listens on IPv4 only (Ollama, Qdrant in Docker).
     model_server: Literal["ollama", "openai"] = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
-    llm_base_url: str = "http://127.0.0.1:8001/v1"  # model_server = openai
+    llm_base_url: str = "http://127.0.0.1:8000/v1"  # model_server = openai
     embedding_base_url: str = "http://127.0.0.1:8002/v1"  # model_server = openai
     llm_model: str = "qwen3.5:9b"
     llm_num_ctx: int = 8192  # Ollama only: its default context silently truncates prompts; vLLM sets it at start
-    llm_temperature: float = 0.0
+    llm_temperature: float = 0.0  # without thinking
     llm_thinking: bool = False  # the model reasons before it answers: slower, aimed at accuracy (SDD AD-10)
+    # Sampling with thinking, as the Qwen3.5 model card recommends for general tasks: greedy
+    # decoding makes the thinking repeat until the timeout. presence_penalty: model server only.
+    llm_thinking_temperature: float = 1.0
+    llm_thinking_top_p: float = 0.95
+    llm_thinking_top_k: int = 20
+    llm_thinking_presence_penalty: float = 1.5
     llm_timeout_s: float = 300  # stops an answer stuck in a repetition loop
     prompt: Literal["v1", "v2", "v3"] = "v2"  # answer prompt, core/prompting.py SYSTEM_PROMPTS
     embedding_model: str = "bge-m3"

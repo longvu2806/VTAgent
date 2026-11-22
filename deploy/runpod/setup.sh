@@ -16,20 +16,29 @@ export HF_HOME="$W/hf"
 
 python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ needed: pick a py3.11+ pod template"'
 
+# Each environment is marked done only once fully installed; one cut short (e.g. the disk
+# filled up) is rebuilt from scratch on the next run.
 # vLLM gets its own environment: it pins torch, transformers and numpy versions of its own.
-if [ ! -x "$W/venv-vllm/bin/vllm" ]; then
+if [ ! -f "$W/venv-vllm/.done" ]; then
+  rm -rf "$W/venv-vllm"
   python3 -m venv "$W/venv-vllm"
   "$W/venv-vllm/bin/pip" install -q --upgrade pip
   "$W/venv-vllm/bin/pip" install -q "vllm==$VLLM_VERSION"
+  touch "$W/venv-vllm/.done"
 fi
 
 # VTAgent itself, with the GPU build of onnxruntime for the reranker.
-if [ ! -x "$W/venv-app/bin/python" ]; then
+if [ ! -f "$W/venv-app/.done" ]; then
+  rm -rf "$W/venv-app"
   python3 -m venv "$W/venv-app"
   "$W/venv-app/bin/pip" install -q --upgrade pip
-  "$W/venv-app/bin/pip" install -q -r "$REPO/requirements.txt"
+  # Without ragas: scoring runs on the laptop, and its instructor dependency caps rich below
+  # the pinned version, so a fresh install cannot resolve it.
+  grep -v '^ragas==' "$REPO/requirements.txt" > "$W/requirements-pod.txt"
+  "$W/venv-app/bin/pip" install -q -r "$W/requirements-pod.txt"
   "$W/venv-app/bin/pip" uninstall -y -q onnxruntime
   "$W/venv-app/bin/pip" install -q "onnxruntime-gpu[cuda,cudnn]==$ORT_VERSION"
+  touch "$W/venv-app/.done"
 fi
 
 # Qdrant server binary (no Docker inside a pod).

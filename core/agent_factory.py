@@ -107,7 +107,11 @@ def _tokenizer(name: str) -> Tokenizer:
 
 
 def _llm(s: Settings) -> BaseChatModel:
-    """The answer model; thinking is switched per request, so one server serves both settings."""
+    """The answer model; thinking is switched per request, so one server serves both settings.
+    Without thinking it decodes greedily; with thinking it samples as the model's authors advise."""
+    sampling = ({"temperature": s.llm_thinking_temperature, "top_p": s.llm_thinking_top_p}
+                if s.llm_thinking else {"temperature": s.llm_temperature})
+    top_k = {"top_k": s.llm_thinking_top_k} if s.llm_thinking else {}
     if s.model_server == "openai":
         from langchain_openai import ChatOpenAI
 
@@ -115,10 +119,11 @@ def _llm(s: Settings) -> BaseChatModel:
             model=s.llm_model,
             base_url=s.llm_base_url,
             api_key=NO_KEY,
-            temperature=s.llm_temperature,
+            **sampling,
+            presence_penalty=s.llm_thinking_presence_penalty if s.llm_thinking else None,
             stream_usage=True,  # token counts arrive in the last streamed chunk
             # Qwen's chat template switch; vLLM's reasoning parser keeps the thinking out of the answer
-            extra_body={"chat_template_kwargs": {"enable_thinking": s.llm_thinking}},
+            extra_body={"chat_template_kwargs": {"enable_thinking": s.llm_thinking}, **top_k},
         )
     from langchain.chat_models import init_chat_model
 
@@ -126,7 +131,8 @@ def _llm(s: Settings) -> BaseChatModel:
         s.llm_model,
         model_provider="ollama",
         base_url=s.ollama_base_url,
-        temperature=s.llm_temperature,
+        **sampling,
+        **top_k,
         num_ctx=s.llm_num_ctx,
         reasoning=s.llm_thinking,  # Ollama keeps the thinking out of the answer text
     )

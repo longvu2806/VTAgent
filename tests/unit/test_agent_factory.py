@@ -38,8 +38,19 @@ def test_an_openai_compatible_server_gets_qwens_thinking_switch():
                                        llm_base_url="http://127.0.0.1:8001/v1"))
 
     assert (llm.model_name, llm.openai_api_base) == ("Qwen/Qwen3.5-9B", "http://127.0.0.1:8001/v1")
-    assert llm.extra_body == {"chat_template_kwargs": {"enable_thinking": True}}
+    assert llm.extra_body == {"chat_template_kwargs": {"enable_thinking": True}, "top_k": 20}
     assert llm.stream_usage
+
+
+def test_thinking_samples_as_qwen_advises_and_plain_answers_stay_greedy():
+    thinking = agent_factory._llm(_settings(model_server="openai", llm_thinking=True))
+    plain = agent_factory._llm(_settings(model_server="openai", llm_thinking=False))
+    local = agent_factory._llm(_settings(llm_thinking=True))
+
+    assert (thinking.temperature, thinking.top_p, thinking.presence_penalty) == (1.0, 0.95, 1.5)
+    assert (plain.temperature, plain.top_p, plain.presence_penalty) == (0.0, None, None)
+    assert plain.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert (local.temperature, local.top_p, local.top_k) == (1.0, 0.95, 20)
 
 
 def test_an_openai_compatible_server_embeds_plain_text():
