@@ -268,7 +268,7 @@
         <mxCell id="t0" value="Kiến trúc đa tác tử VTAgent: RAG · Analyst · Validator" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontColor=#1F3864;fontSize=22;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="40" y="22" width="620" height="34" as="geometry" />
         </mxCell>
-        <mxCell id="t1" value="Luồng truy vấn và luồng nạp · chạy hoàn toàn cục bộ · trần p95 &lt; 3 phút" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontColor=#44546A;fontSize=13;" vertex="1" parent="1">
+        <mxCell id="t1" value="Luồng truy vấn và luồng nạp · chạy hoàn toàn cục bộ · ưu tiên độ chính xác, không đặt trần thời gian" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontColor=#44546A;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="40" y="58" width="620" height="22" as="geometry" />
         </mxCell>
         <mxCell id="t2" value="Pha nạp (ngoại tuyến)" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontColor=#2C5F8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
