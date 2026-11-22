@@ -32,8 +32,36 @@ configurations R0, R1, R3, R3′ and R4 of the ablation plan (see
 
 3. Optional: copy `.env.example` to `.env` to override settings.
 
+4. Optional: run Qdrant as a server instead of the embedded one under `data/qdrant`.
+   Install Docker Desktop, then:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   and set `VTAGENT_QDRANT_URL=http://127.0.0.1:6333` in `.env`.
+
+5. Build the web UI. It needs [Node.js](https://nodejs.org) 22 or newer and pnpm 11:
+
+   ```bash
+   npm install -g pnpm
+   cd web
+   pnpm install
+   pnpm build
+   cd ..
+   ```
+
+6. Start it with `python main.py serve` and open `http://127.0.0.1:8000`
+   (see [Web UI and API](#web-ui-and-api)).
+
 The first run downloads the bge-m3 tokenizer from Hugging Face. After that, set
 `HF_HUB_OFFLINE=1` so processing makes no outbound connections (NFR-01).
+
+**Upgrading from a version without the API?** Collections named `vtagent_docs_*` cannot be
+used any more: set `VTAGENT_COLLECTION` in `.env` to a new name such as `vtagent_chunks_r3`
+and ingest the documents again. `python main.py serve` refuses to start on an old collection
+and says so. The first run also upgrades `data/vtagent.db`; its old table is kept as
+`legacy_registry`.
 
 ## Usage
 
@@ -52,7 +80,7 @@ Pass one or more files. Each file is parsed, split into 400-token chunks,
 embedded with bge-m3 and indexed in Qdrant. One line is printed per file:
 
 ```
-indexed contract.docx → 648899d2d11bab78 (12 chunks)
+indexed contract.docx → document 3f2b…, version 1 (12 chunks)
 rejected: notes.txt: unsupported format '.txt' (PDF and DOCX only)
 rejected: scan.pdf: no text layer found (scanned document?)
 not found: missing.pdf
@@ -70,12 +98,18 @@ not found: missing.pdf
   ```
 
 - **Where data goes:** `data/files/` keeps a copy of each original (for checking
-  citations), `data/qdrant/` holds the index, `data/vtagent.db` lists the
-  indexed documents.
+  citations), `data/qdrant/` holds the index, `data/vtagent.db` is the catalog of
+  documents and their versions, conversations and ingest jobs.
 - **Start over:** delete the `data/` folder and ingest again.
 - **Changed chunking settings?** Also change `VTAGENT_COLLECTION` (e.g.
-  `vtagent_docs_r0_300`). Documents are tracked per collection, so files already
-  indexed with the old settings would otherwise be skipped.
+  `vtagent_chunks_r0_300`). Documents are tracked per collection, so files already
+  indexed with the old settings would otherwise be skipped. A file indexed in several
+  collections stays one document with the same ids.
+- **Collections from before versions** (named `vtagent_docs_*`) are refused with an error:
+  their chunks have no tenant or version. Ingest the documents again into a
+  `vtagent_chunks_*` collection; the old registry is kept as the `legacy_registry` table.
+  For an eval run, set `VTAGENT_COLLECTION=vtagent_chunks_<config>` in `.env`: `tests.eval.generate`
+  ingests the documents of the dataset's `doc` column before the first question.
 
 ### Retrieval configurations
 
@@ -83,10 +117,10 @@ Set in `.env` (SAD Table 6.5); every line of a preset is needed:
 
 | Config | Settings |
 |---|---|
-| R0: fixed 400-token chunks, dense search | `VTAGENT_CHUNKING=fixed`, `VTAGENT_COLLECTION=vtagent_docs_r0` |
-| R1: parent–child chunks (Điều / Khoản / Điểm) | `VTAGENT_CHUNKING=structured`, `VTAGENT_COLLECTION=vtagent_docs_r1` |
-| R3: R1 + BM25, fused with dense by RRF (40 + 40 candidates) | R1 chunking, `VTAGENT_SPARSE=bm25`, `VTAGENT_COLLECTION=vtagent_docs_r3` |
-| R3′: R1 + bge-m3 sparse weights instead of BM25 | R1 chunking, `VTAGENT_SPARSE=bge-m3`, `VTAGENT_COLLECTION=vtagent_docs_r3b` |
+| R0: fixed 400-token chunks, dense search | `VTAGENT_CHUNKING=fixed`, `VTAGENT_COLLECTION=vtagent_chunks_r0` |
+| R1: parent–child chunks (Điều / Khoản / Điểm) | `VTAGENT_CHUNKING=structured`, `VTAGENT_COLLECTION=vtagent_chunks_r1` |
+| R3: R1 + BM25, fused with dense by RRF (40 + 40 candidates) | R1 chunking, `VTAGENT_SPARSE=bm25`, `VTAGENT_COLLECTION=vtagent_chunks_r3` |
+| R3′: R1 + bge-m3 sparse weights instead of BM25 | R1 chunking, `VTAGENT_SPARSE=bge-m3`, `VTAGENT_COLLECTION=vtagent_chunks_r3b` |
 | R4: R3 + cross-encoder reranking, 40 → 5 | R3 settings and `VTAGENT_RERANK=true` |
 
 - **Collections:** each sparse type has its own index, so switching type means switching
@@ -217,23 +251,45 @@ The metrics, how each is computed and which are primary are specified in
   the run directory (`judge_cache.jsonl`), so rescoring is free. The eval dataset is
   public law text; the judge is used only for evaluation, never in the running system.
 
-## Web UI
+## Web UI and API
 
-`web/` holds the browser interface (React + Vite). Until the FastAPI backend exists, it
-runs against a mock of the API inside the browser (MSW) with invented sample documents,
-so it needs neither Ollama nor Python.
+`python main.py serve` runs the API (`api/`, SDD 9) and the built web UI (`web/dist`) on
+`http://127.0.0.1:8000`, with the settings of `.env` like the other commands. Build the UI
+first:
 
 ```bash
 cd web
 pnpm install
+pnpm build   # static files in web/dist
+cd ..
+python main.py serve
+```
+
+- **Local only:** the server listens on 127.0.0.1, accepts only the `127.0.0.1` and `localhost`
+  host names, and refuses writes without the `X-VTAgent: 1` header the UI sends.
+- **What it does now:** upload with progress, new versions, delete (with the answers citing
+  the document, BR10), questions answered by the agent graph with the draft streaming in a
+  collapsed panel, citations that open the original PDF page, conversation history, export.
+- **Not yet:** the validator is a stub, so answers say "Chưa kiểm chứng tự động". Review
+  rules, the document outline, titles and genres come with their agents; the UI shows empty
+  states for them.
+- **One worker:** uploads and questions run one at a time, so the models fit in memory
+  (SDD 5.6). Uploads wait in `data/uploads/` and resume after a restart.
+- **API schema:** `http://127.0.0.1:8000/openapi.json` (OpenAPI). The interactive `/docs` page is
+  off: it loads its scripts from a CDN, and VTAgent makes no outbound connections (NFR-01).
+
+To work on the UI without models, the dev server answers from a mock of the API inside the
+browser (MSW) with invented sample documents:
+
+```bash
+cd web
 pnpm dev     # http://127.0.0.1:5173 with the browser mock
 pnpm test    # offline unit tests (Vitest)
-pnpm build   # static files in web/dist, without the mock
 ```
 
 - **Sample questions** for every answer path (verified, rewritten in round 2, partial, not
   found, calculation, error) are listed on the new-chat page.
 - **Mock data** lives in memory: a page reload brings back the sample documents and
   conversations.
-- **Real API:** set `VITE_MOCK=0` in `web/.env.development.local`; the dev server then
-  proxies `/api` to `http://127.0.0.1:8000`.
+- **Dev server against the real API:** set `VITE_MOCK=0` in `web/.env.development.local` and
+  run `python main.py serve`; the dev server proxies `/api` to `http://127.0.0.1:8000`.

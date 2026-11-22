@@ -22,6 +22,15 @@ describe("quoteItems", () => {
     expect(quoteItems(items, "2. Trường hợp Bên B giao hàng chậm,").has(7)).toBe(false);
   });
 
+  it("ignores the Markdown of the parsed quote", () => {
+    expect(quoteItems(items, "**2. Trường hợp Bên B giao hàng chậm,**\n\n Bên B chịu phạt.")).toEqual(new Set([3, 4, 6]));
+  });
+
+  it("marks the part of the quote on this page when it runs onto another", () => {
+    const quote = "Bên B chịu phạt.\nTài liệu mẫu cho bản demo.\nĐiều 6. Nghiệm thu trong vòng 05 ngày.";
+    expect(quoteItems(items, quote)).toEqual(new Set([6]));
+  });
+
   it("finds nothing when the quote is not on the page", () => {
     expect(quoteItems(items, "Điều khoản trọng tài")).toEqual(new Set());
   });

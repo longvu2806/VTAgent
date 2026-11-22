@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 from qdrant_client import QdrantClient
 
+from core.catalog import Catalog
 from core.chunking import split_pages_fixed, split_structured
 from core.context import assemble
 from core.ingestion import Ingestor
@@ -21,7 +22,7 @@ from core.prompting import NOT_FOUND
 from core.rerank import Reranker
 from core.retrieval import Retrieval, Retriever
 from core.sparse import BM25Encoder
-from core.stores import DocumentRegistry, VectorStore
+from core.stores import VectorStore
 
 
 class OllamaLikeChatModel(GenericFakeChatModel):
@@ -74,7 +75,7 @@ def _ingestor(tmp_path, tokenizer, embedder, client, collection="test", chunker=
         chunker=chunker or partial(split_pages_fixed, tokenizer=tokenizer, chunk_size=400, overlap=50),
         embedder=embedder,
         store=VectorStore(client, collection),
-        registry=DocumentRegistry(tmp_path / "db.sqlite", collection),
+        catalog=Catalog(tmp_path / "db.sqlite", "default"),
     )
 
 
@@ -82,14 +83,14 @@ def test_ingest_then_ask_maps_citation_to_chunk(tmp_path, word_tokenizer, embedd
     record = _ingestor(tmp_path, word_tokenizer, embedder, client).ingest(contract)
 
     assert record.n_chunks == 1
-    assert Path(record.stored_path).read_bytes() == contract.read_bytes()
+    assert Path(record.version.stored_path).read_bytes() == contract.read_bytes()
 
     llm = FakeListChatModel(responses=["Phạt 0,05% mỗi ngày [S1]."])
     answer = _rag(embedder, client, llm).ask("Mức phạt chậm giao hàng?")
 
     assert answer.text == "Phạt 0,05% mỗi ngày [S1]."
     [citation] = answer.citations
-    assert citation.chunk.doc_id == record.doc_id
+    assert (citation.chunk.version_id, citation.chunk.document_id) == (record.version.id, record.document_id)
     assert citation.chunk.source == "hd.docx"
     assert "0,05%" in citation.chunk.text
 
@@ -122,22 +123,43 @@ def test_reingesting_same_file_skips_embedding(tmp_path, word_tokenizer, embedde
     first = ingestor.ingest(contract)
     second = ingestor.ingest(contract)
 
-    assert second == first
+    assert second.duplicate and second.version == first.version
     assert embedder.document_calls == 1
 
 
 def test_same_file_is_indexed_again_for_another_collection(tmp_path, word_tokenizer, embedder, client, contract):
-    _ingestor(tmp_path, word_tokenizer, embedder, client, "r0").ingest(contract)
-    _ingestor(tmp_path, word_tokenizer, embedder, client, "r1").ingest(contract)
+    first = _ingestor(tmp_path, word_tokenizer, embedder, client, "r0").ingest(contract)
+    second = _ingestor(tmp_path, word_tokenizer, embedder, client, "r1").ingest(contract)
 
     assert embedder.document_calls == 2
+    assert (second.document_id, second.version, second.duplicate) == (first.document_id, first.version, False)
+
+
+def test_a_new_version_replaces_the_previous_one_in_search(tmp_path, word_tokenizer, embedder, client, contract):
+    ingestor = _ingestor(tmp_path, word_tokenizer, embedder, client)
+    first = ingestor.ingest(contract)
+    amended = tmp_path / "hd-sua-doi.docx"
+    document = docx.Document()
+    document.add_paragraph("Điều 5. Bên B chịu phạt 0,1% mỗi ngày chậm giao hàng.")
+    document.save(amended)
+
+    second = ingestor.ingest(amended, document_id=first.document_id)
+
+    assert (second.document_id, second.version.seq) == (first.document_id, 2)
+    hits = VectorStore(client, "test").search(embedder.embed_query("Mức phạt?"), 5)
+    assert [h.chunk.version_id for h in hits] == [second.version.id]
+
+
+def test_a_version_of_an_unknown_document_is_refused(tmp_path, word_tokenizer, embedder, client, contract):
+    with pytest.raises(ValueError, match="no document"):
+        _ingestor(tmp_path, word_tokenizer, embedder, client).ingest(contract, document_id="missing")
 
 
 def _hybrid(tmp_path, tokenizer, embedder, client, contract, llm, score):
     """Ingest with BM25 sparse vectors, then a pipeline with hybrid search and reranking (R4)."""
     bm25 = BM25Encoder(k1=1.2, b=0.75, avg_len=10)
     Ingestor(tmp_path / "files", partial(split_pages_fixed, tokenizer=tokenizer, chunk_size=400, overlap=50),
-             embedder, VectorStore(client, "r3", sparse_idf=True), DocumentRegistry(tmp_path / "db.sqlite", "r3"),
+             embedder, VectorStore(client, "r3", sparse_idf=True), Catalog(tmp_path / "db.sqlite", "default"),
              sparse_encoder=bm25).ingest(contract)
     retriever = Retriever(embedder, VectorStore(client, "r3", sparse_idf=True), top_k=5, sparse_encoder=bm25,
                           rerank=Reranker(score, keep=5, threshold=0.5), candidates=40)

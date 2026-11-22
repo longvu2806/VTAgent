@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from config import Settings
 from config import settings as default_settings
+from core.catalog import Catalog
 from core.chunking import split_pages_fixed, split_structured
 from core.context import assemble
 from core.graph import QueryGraph
@@ -17,7 +18,7 @@ from core.prompting import SYSTEM_PROMPTS
 from core.rerank import Reranker, onnx_cross_encoder
 from core.retrieval import Retriever
 from core.sparse import BgeM3SparseEncoder, BM25Encoder
-from core.stores import DocumentRegistry, VectorStore
+from core.stores import VectorStore
 
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
@@ -33,9 +34,10 @@ BM25_AVG_LEN = 279  # mean BM25 tokens per child chunk, measured on the 9-docume
 RERANK_MAX_TOKENS = 512  # question + child chunk (children are at most 400 tokens)
 RERANK_BATCH = 8
 MAX_ROUNDS = 2  # drafts per question: the first and one retry (SAD Table 9.1)
+DEFAULT_TENANT = "default"  # the only tenant until multi-tenant deployment (SDD 4.8)
 
 
-def build_ingestor(s: Settings = default_settings) -> Ingestor:
+def build_ingestor(s: Settings = default_settings, catalog: Catalog | None = None) -> Ingestor:
     tokenizer = _tokenizer(s.tokenizer_name)
     if s.chunking == "fixed":
         chunker = partial(split_pages_fixed, tokenizer=tokenizer, chunk_size=s.chunk_size, overlap=s.chunk_overlap)
@@ -47,16 +49,16 @@ def build_ingestor(s: Settings = default_settings) -> Ingestor:
         files_dir=s.data_dir / "files",
         chunker=chunker,
         embedder=_embedder(s),
-        store=_vector_store(s),
-        registry=build_registry(s),
+        store=vector_store(s),
+        catalog=catalog or build_catalog(s),
         sparse_encoder=sparse_encoder(s),
     )
 
 
-def build_registry(s: Settings = default_settings) -> DocumentRegistry:
-    """The documents indexed in the configured collection."""
+def build_catalog(s: Settings = default_settings) -> Catalog:
+    """Documents, conversations and jobs in SQLite, shared by every collection."""
     s.data_dir.mkdir(parents=True, exist_ok=True)
-    return DocumentRegistry(s.data_dir / "vtagent.db", s.collection)
+    return Catalog(s.data_dir / "vtagent.db", DEFAULT_TENANT)
 
 
 def build_pipeline(s: Settings = default_settings) -> RAGPipeline:
@@ -78,7 +80,7 @@ def build_pipeline(s: Settings = default_settings) -> RAGPipeline:
             return len(tokenizer.encode(text, add_special_tokens=False).ids)
 
         assembler = partial(assemble, budget=s.context_budget_tokens, count_tokens=count)
-    retriever = Retriever(_embedder(s), _vector_store(s), s.top_k, assemble=assembler,
+    retriever = Retriever(_embedder(s), vector_store(s), s.top_k, assemble=assembler,
                           sparse_encoder=sparse_encoder(s), rerank=_reranker(s) if s.rerank else None,
                           candidates=CANDIDATES)
     return RAGPipeline(retriever, llm, timeout_s=s.llm_timeout_s, system_prompt=SYSTEM_PROMPTS[s.prompt])
@@ -119,10 +121,12 @@ def _embedder(s: Settings) -> Embeddings:
     return OllamaEmbeddings(model=s.embedding_model, base_url=s.ollama_base_url)
 
 
-def _vector_store(s: Settings) -> VectorStore:
+def vector_store(s: Settings, collection: str | None = None) -> VectorStore:
+    """The configured collection, or another one (to delete a document from every collection)."""
     s.data_dir.mkdir(parents=True, exist_ok=True)
     sparse_idf = {"none": None, "bm25": True, "bge-m3": False}[s.sparse]  # bge-m3 weights are learned
-    return VectorStore(_qdrant(s.qdrant_url, str(s.data_dir / "qdrant")), s.collection, sparse_idf=sparse_idf)
+    return VectorStore(_qdrant(s.qdrant_url, str(s.data_dir / "qdrant")), collection or s.collection,
+                       sparse_idf=sparse_idf, tenant_id=DEFAULT_TENANT)
 
 
 @cache

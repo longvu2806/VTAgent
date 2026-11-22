@@ -14,7 +14,7 @@ class PageText:
 @dataclass(frozen=True)
 class Chunk:
     chunk_id: str
-    doc_id: str
+    version_id: str  # the indexed file: the first 32 hex digits of its SHA-256 (SDD 4.6)
     source: str  # original file name, shown in citations
     page: int | None
     index: int  # position of the chunk within its document
@@ -22,6 +22,7 @@ class Chunk:
     section: str = ""  # place in the document's structure, e.g. "Điều 8. … › Khoản 8" (R1+)
     parent_id: str | None = None  # children of one parent share it (R1+)
     parent_text: str = ""  # the parent's text, stored with each child (SAD 7.x)
+    document_id: str = ""  # the document the version belongs to; stable across versions
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,36 @@ class Answer:
 
 
 @dataclass(frozen=True)
-class DocumentRecord:
-    doc_id: str
-    source: str
+class Version:
+    """One file of a document (SDD 4.3, document_versions)."""
+
+    id: str
+    document_id: str
+    seq: int  # 1 for the first file, then +1 per new version
+    file_name: str
+    file_ext: str  # ".pdf", ".docx"
+    file_size: int
     stored_path: str
-    n_chunks: int
+    pages: int | None
     ingested_at: str  # ISO 8601, UTC
+
+
+@dataclass(frozen=True)
+class Document:
+    id: str
+    title: str | None  # filled in by metadata extraction (FR-12), not yet implemented
+    doc_number: str | None
+    genre: str
+    validity_status: str
+    status: str  # ready | deleting
+    created_at: str
+    current: Version
+    versions: list[Version]  # newest first
+
+
+@dataclass(frozen=True)
+class IngestResult:
+    document_id: str
+    version: Version
+    n_chunks: int
+    duplicate: bool  # the file was already indexed in this collection; nothing was done

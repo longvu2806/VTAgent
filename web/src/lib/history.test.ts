@@ -22,6 +22,14 @@ describe("turnsToMessages", () => {
     ]);
   });
 
+  it("does not claim a check the Validator never made", () => {
+    const cite = { label: "S1", chunk_id: "c", document_id: "d", document_title: "hd.pdf", version_id: "v", section: "Điều 5", page: 1 };
+    const [, unchecked] = turnsToMessages([turn({ citations: [{ ...cite, verdict: "unchecked" }] })]);
+    const [, checked] = turnsToMessages([turn({ citations: [{ ...cite, verdict: "supported" }] })]);
+    expect(unchecked.parts.some((p) => p.type === "data-verification")).toBe(false);
+    expect(checked.parts.some((p) => p.type === "data-verification")).toBe(true);
+  });
+
   it("marks a failed turn without inventing an answer", () => {
     const [, answer] = turnsToMessages([turn({ status: "failed", answer: null })]);
     expect(answer.parts).toEqual([{ type: "data-turn", data: expect.objectContaining({ status: "failed" }) }]);

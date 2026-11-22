@@ -19,7 +19,7 @@ from pathlib import Path
 from rich.progress import Progress
 
 from config import JUDGE_SETTINGS, settings
-from core.agent_factory import build_ingestor, build_query_graph, build_registry
+from core.agent_factory import build_catalog, build_ingestor, build_query_graph
 from core.models import Answer, RetrievedChunk
 from observability import console, log, setup_logging
 from tests.eval.dataset import Dataset, EvalItem, load_dataset
@@ -39,7 +39,7 @@ def main() -> None:
     log.info("settings: %s", settings.model_dump_json())
     dataset = load_dataset(args.dataset)
     _ingest(dataset)
-    corpus = sorted(r.source for r in build_registry().documents())
+    corpus = sorted(d.current.file_name for d in build_catalog().documents(settings.collection))
     run_dir = settings.data_dir / "eval_runs" / (args.name or f"{settings.collection}__{args.dataset.stem}")
     meta = prepare_run_dir(run_dir, args.dataset, settings.model_dump(mode="json", exclude=JUDGE_SETTINGS), corpus)
     records, results = run_dir / meta["records"], run_dir / meta["results"]

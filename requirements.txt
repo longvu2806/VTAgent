@@ -11,6 +11,12 @@ qdrant-client==1.19.1
 rich==15.0.0
 tokenizers==0.23.2
 
+# HTTP API (api/); httpx also drives FastAPI's TestClient in the unit tests
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
+httpx==0.28.1
+
 # Hybrid search and reranking (R3–R4), CPU only, no PyTorch
 onnxruntime==1.30.0
 huggingface_hub==1.33.0

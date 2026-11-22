@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     # Storage
     data_dir: Path = Path("data")
     qdrant_url: str | None = None  # unset: embedded Qdrant under data_dir/qdrant
-    collection: str = "vtagent_docs_r0"
+    collection: str = "vtagent_chunks_r0"
+    max_upload_mb: int = 50  # larger uploads are refused (SDD 9.4, file_too_large)
 
     # Models served by Ollama.
     # Use 127.0.0.1, not localhost: on Windows, localhost tries IPv6 first and adds ~2 s

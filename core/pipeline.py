@@ -5,6 +5,7 @@ multi-agent system."""
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextlib import closing
 from typing import TYPE_CHECKING
 
@@ -30,20 +31,22 @@ class RAGPipeline:
         self.timeout_s = timeout_s  # None: no limit on the LLM step
         self.system_prompt = system_prompt
 
-    def ask(self, question: str) -> Answer:
+    def ask(self, question: str, document_ids: list[str] | None = None) -> Answer:
         timings: dict[str, float] = {}
-        return self.answer(question, self.retriever.retrieve(question, timings), timings)
+        return self.answer(question, self.retriever.retrieve(question, timings, document_ids), timings)
 
-    def answer(self, question: str, retrieval: Retrieval, timings: dict[str, float] | None = None) -> Answer:
+    def answer(self, question: str, retrieval: Retrieval, timings: dict[str, float] | None = None,
+               on_token: Callable[[str], None] | None = None) -> Answer:
         """Answer from evidence already retrieved, without searching again. ``timings`` holds the
-        stages already spent on the question (retrieval); the generation stages are added to a copy."""
+        stages already spent on the question (retrieval); the generation stages are added to a copy.
+        ``on_token`` receives the reply as it streams; an exception it raises stops the LLM."""
         timings = dict(timings or {})
         sources = retrieval.sources
         if not sources:
             return Answer(NOT_FOUND, citations=[], sources=[], timings=timings, retrieved=retrieval.hits)
 
         with timed("generate", timings):
-            reply, timed_out = self._generate(build_messages(question, sources, self.system_prompt))
+            reply, timed_out = self._generate(build_messages(question, sources, self.system_prompt), on_token)
         if timed_out:
             log.warning("LLM stopped after %.0fs time limit; the answer is incomplete", self.timeout_s)
         for key, stage in _OLLAMA_DURATIONS.items():
@@ -54,7 +57,8 @@ class RAGPipeline:
         return Answer(reply.text, extract_citations(reply.text, sources), sources, timings, tokens, timed_out,
                       retrieval.hits)
 
-    def _generate(self, messages: list[tuple[str, str]]) -> tuple[AIMessageChunk, bool]:
+    def _generate(self, messages: list[tuple[str, str]],
+                  on_token: Callable[[str], None] | None = None) -> tuple[AIMessageChunk, bool]:
         """Stream the reply and stop once ``timeout_s`` has passed (checked as tokens arrive).
         Closing the stream closes the connection, which makes Ollama stop generating."""
         deadline = None if self.timeout_s is None else time.monotonic() + self.timeout_s
@@ -62,6 +66,8 @@ class RAGPipeline:
         with closing(iter(self.llm.stream(messages))) as stream:
             for chunk in stream:
                 reply = chunk if reply is None else reply + chunk
+                if on_token is not None and chunk.text:
+                    on_token(chunk.text)
                 if deadline is not None and time.monotonic() >= deadline:
                     return reply, True
         return reply, False

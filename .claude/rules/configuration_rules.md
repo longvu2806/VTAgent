@@ -13,7 +13,7 @@
   SAD may be hard-coded in the factory with a comment citing the SAD section.
 - Every ablation config (R0–R5, SAD Table 6.5) must be reproducible from settings
   alone. One config = one Qdrant collection whose name carries the config id
-  (e.g. `vtagent_docs_r0`), so indexes built with different chunking never mix.
+  (e.g. `vtagent_chunks_r0`), so indexes built with different chunking never mix.
 - Entry points log the effective settings at the start of every run, so each
   result can be traced back to the exact configuration.
 - Secrets (e.g. the API key of the offline eval judge) come only from environment

@@ -1,7 +1,16 @@
 // One answer: a live stage line, the Analyst's calculations and the collapsible draft while
 // the pipeline runs, then the verified answer with its citations and a verification summary.
 import type { DynamicToolUIPart } from "ai";
-import { CheckIcon, ChevronRightIcon, CircleDashedIcon, CopyIcon, DownloadIcon, SearchXIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CircleDashedIcon,
+  CopyIcon,
+  DownloadIcon,
+  InfoIcon,
+  SearchXIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
@@ -87,7 +96,11 @@ export function AssistantMessage({ message, running, failed }: Props) {
               </span>
             </p>
           )}
-          <AnswerFooter answer={answer} turn={turn} flagged={verification?.sentences.filter((s) => !s.supported).length ?? 0} />
+          <AnswerFooter
+            answer={answer}
+            turn={turn}
+            flagged={verification ? verification.sentences.filter((s) => !s.supported).length : null}
+          />
         </div>
       )}
     </article>
@@ -109,14 +122,19 @@ function NotFound({ text }: { text: string }) {
   );
 }
 
-function AnswerFooter({ answer, turn, flagged }: { answer: string; turn: TurnData | undefined; flagged: number }) {
+/** ``flagged``: sentences the Validator could not support, or null when it did not check the answer. */
+function AnswerFooter({ answer, turn, flagged }: { answer: string; turn: TurnData | undefined; flagged: number | null }) {
   const [copied, setCopied] = useState(false);
   const sentences = splitSentences(answer).length;
   const save = (format: "md" | "json") =>
     turn && download(`/turns/${turn.id}/export?format=${format}`).catch(() => toast.error("Không xuất được câu trả lời."));
   return (
     <div className="flex items-center gap-1 text-sm text-muted-foreground">
-      {flagged === 0 ? (
+      {flagged === null ? (
+        <span className="flex items-center gap-1.5">
+          <InfoIcon className="size-4" /> Chưa kiểm chứng tự động
+        </span>
+      ) : flagged === 0 ? (
         <span className="flex items-center gap-1.5">
           <CheckIcon className="size-4 text-ink" /> Đã đối chiếu {sentences} câu với nguồn
         </span>

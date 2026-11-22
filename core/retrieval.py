@@ -42,8 +42,8 @@ class Retriever:
         self.rerank = rerank  # None: keep the search order
         self.candidates = candidates or top_k  # hits each search contributes to fusion and reranking
 
-    def retrieve(self, question: str, timings: dict[str, float]) -> Retrieval:
-        """Stage durations are added to ``timings``."""
+    def retrieve(self, question: str, timings: dict[str, float], document_ids: list[str] | None = None) -> Retrieval:
+        """Search the whole store, or only ``document_ids`` (FR-14). Stage durations are added to ``timings``."""
         with timed("embed_query", timings):
             vector = self.embedder.embed_query(question)
         sparse = None
@@ -52,7 +52,8 @@ class Retriever:
                 sparse = self.sparse_encoder.query(question)
         limit = self.candidates if self.rerank is not None else self.top_k
         with timed("search", timings):
-            hits = self.store.search(vector, limit, sparse=sparse, candidates=self.candidates)
+            hits = self.store.search(vector, limit, sparse=sparse, candidates=self.candidates,
+                                     document_ids=document_ids)
         if self.rerank is not None:
             with timed("rerank", timings):
                 hits = self.rerank(question, hits)  # keeps at most top_k
