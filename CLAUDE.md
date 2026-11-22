@@ -19,7 +19,11 @@ Undergraduate thesis project.
 
 Ryzen 7 8845HS, Radeon 780M iGPU (Vulkan, `OLLAMA_IGPU_ENABLE=1`), 32 GB RAM with
 ~26 GB usable, no discrete GPU. Inference is memory-bandwidth bound.
-Priority is accuracy over latency; ceiling is p95 < 3 min per query.
+Accuracy is the only target: latency is measured and reported (p50/p95) but has no
+ceiling (decided 2026-11-22, SDD AD-10; replaces NFR-07's p95 < 3 min). The 300 s
+limit per LLM call stays, to stop repetition loops. Benchmarks run on a rented GPU
+server (RunPod RTX A5000, standing in for a company's own server) through vLLM; see
+`deploy/runpod/`. Development stays on the laptop with Ollama.
 
 ## Stack
 
@@ -45,6 +49,7 @@ Qdrant runs embedded under `data/qdrant` until Docker is installed; set
 python -m pytest                               # offline unit tests
 python main.py ingest doc1.pdf doc2.docx       # index documents
 python main.py ask "Mức phạt chậm giao hàng?"  # ask a question
+bash deploy/runpod/bench.sh                     # on the GPU pod: benchmark through vLLM
 
 # Eval, two phases (tests/eval/, metrics specified in tests/eval/METRICS.md):
 # generate needs Ollama + Qdrant; score needs nothing for code metrics, and the

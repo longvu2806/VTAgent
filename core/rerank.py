@@ -29,13 +29,23 @@ class Reranker:
         return kept[: self.keep]
 
 
-def onnx_cross_encoder(model_path: str, tokenizer_path: str, max_length: int, batch_size: int) -> Score:
-    """Scores with a cross-encoder exported to ONNX (e.g. bge-reranker-v2-m3 int8) on the CPU."""
+PROVIDERS = {"cpu": "CPUExecutionProvider", "cuda": "CUDAExecutionProvider"}
+
+
+def onnx_cross_encoder(model_path: str, tokenizer_path: str, max_length: int, batch_size: int,
+                       device: str = "cpu") -> Score:
+    """Scores with a cross-encoder exported to ONNX (e.g. bge-reranker-v2-m3) on the CPU (int8
+    model) or the GPU (fp16 model, onnxruntime-gpu)."""
     import numpy as np
     import onnxruntime
     from tokenizers import Tokenizer
 
-    session = onnxruntime.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+    if device == "cuda" and hasattr(onnxruntime, "preload_dlls"):
+        onnxruntime.preload_dlls()  # CUDA and cuDNN from the nvidia-* pip packages of onnxruntime-gpu[cuda,cudnn]
+    session = onnxruntime.InferenceSession(model_path, providers=[PROVIDERS[device]])
+    if session.get_providers()[0] != PROVIDERS[device]:  # onnxruntime falls back to the CPU silently
+        raise RuntimeError(f"the reranker should run on {device} but onnxruntime uses {session.get_providers()[0]}: "
+                           "install onnxruntime-gpu with CUDA, or rerank on the cpu")
     inputs = {i.name for i in session.get_inputs()}
     tokenizer = Tokenizer.from_file(tokenizer_path)
     tokenizer.enable_truncation(max_length=max_length)

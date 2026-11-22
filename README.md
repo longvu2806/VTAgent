@@ -216,3 +216,43 @@ The metrics, how each is computed and which are primary are specified in
   One scoring of 80 answerable questions costs about $0.3–0.6. Verdicts are cached in
   the run directory (`judge_cache.jsonl`), so rescoring is free. The eval dataset is
   public law text; the judge is used only for evaluation, never in the running system.
+
+### 5. Benchmark on a GPU server (RunPod)
+
+Benchmarks run on a rented GPU (RunPod RTX A5000, 24 GB), standing in for a company's own
+server; development stays on the laptop. The models are served by vLLM (`VTAGENT_MODEL_SERVER=openai`)
+and the reranker runs on the GPU. Only public evaluation documents go to the pod.
+
+1. **Create a pod:** RTX A5000, a PyTorch template with Python 3.11+ and a CUDA 12.8+ driver,
+   and a network volume of about 60 GB mounted at `/workspace` (it keeps the environments and
+   models, so later pods skip the downloads).
+2. **Code and data:** in `/workspace`, `git clone -b feat/gpu-deploy https://github.com/longvu2806/VTAgent.git`,
+   then copy `data/test/` from the laptop into `VTAgent/data/test/` (it is not in git), e.g. with
+   `scp -P <port> -r data/test root@<pod-ip>:/workspace/VTAgent/data/`.
+3. **On the pod**, from `/workspace/VTAgent`:
+
+   ```bash
+   bash deploy/runpod/setup.sh          # once: vLLM, VTAgent, Qdrant, models (~15–20 min)
+   bash deploy/runpod/start.sh          # Qdrant + vLLM (qwen3.5-9b FP8) + vLLM (bge-m3)
+   bash deploy/runpod/bench.sh --limit 3   # trial: 3 questions without and with thinking
+   nvidia-smi                           # all three on the GPU?
+   bash deploy/runpod/bench.sh          # all 100 questions, then /workspace/results.tgz
+   ```
+
+4. **Back on the laptop:** download `results.tgz`, unpack it into `data/`, **stop the pod**, then
+   score each run as usual:
+
+   ```bash
+   python -m tests.eval.score data/eval_runs/a5000_9b
+   python -m tests.eval.score data/eval_runs/a5000_9b_think
+   ```
+
+- **Two runs, one difference:** `bench.sh` runs R4 with prompt v2 twice, `VTAGENT_LLM_THINKING`
+  false then true; retrieval is identical, so any difference comes from the thinking.
+- **Another model:** `LLM_MODEL=<hf id> bash deploy/runpod/start.sh` and
+  `LLM_MODEL=<hf id> PREFIX=<run name> bash deploy/runpod/bench.sh`. A larger model needs a
+  larger `LLM_MEMORY` share, and a 27B model a pre-quantized (AWQ) checkpoint to fit 24 GB.
+- **Logs** are in `/workspace/logs/`; servers listen on 127.0.0.1 only.
+- **Trying `VTAGENT_MODEL_SERVER=openai` on the laptop** against Ollama's OpenAI-compatible API
+  (`http://127.0.0.1:11434/v1`) works, but that API ignores the thinking switch: qwen3.5 always
+  thinks there, so answers are correct but slow. vLLM follows the switch.

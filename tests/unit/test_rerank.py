@@ -1,7 +1,12 @@
 """Reranker: reorders the candidates by a cross-encoder score, keeps the best few."""
 
+import pytest
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import WhitespaceSplit
+
 from core.models import Chunk, RetrievedChunk
-from core.rerank import Reranker
+from core.rerank import Reranker, onnx_cross_encoder
 
 SCORES = {"a": 0.2, "b": 0.9, "c": 0.6, "d": 0.05}
 
@@ -35,3 +40,35 @@ def test_reranker_does_not_score_an_empty_list():
         raise AssertionError("scored")
 
     assert Reranker(fail, keep=5)("q", []) == []
+
+
+class _Session:
+    """onnxruntime.InferenceSession stand-in that runs on the providers it is given, or the CPU."""
+
+    def __init__(self, path, providers, available=("CPUExecutionProvider",)):
+        self.providers = [p for p in providers if p in available] or ["CPUExecutionProvider"]
+
+    def get_providers(self):
+        return self.providers
+
+    def get_inputs(self):
+        return []
+
+
+@pytest.fixture
+def tokenizer_file(tmp_path):
+    tokenizer = Tokenizer(WordLevel({"[UNK]": 0, "<pad>": 1}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = WhitespaceSplit()
+    path = tmp_path / "tokenizer.json"
+    tokenizer.save(str(path))
+    return str(path)
+
+
+def test_a_gpu_reranker_without_cuda_fails_instead_of_running_on_the_cpu(monkeypatch, tokenizer_file):
+    import onnxruntime
+
+    monkeypatch.setattr(onnxruntime, "InferenceSession", _Session)
+
+    with pytest.raises(RuntimeError, match="onnxruntime-gpu"):
+        onnx_cross_encoder("model.onnx", tokenizer_file, max_length=512, batch_size=8, device="cuda")
+    assert callable(onnx_cross_encoder("model.onnx", tokenizer_file, max_length=512, batch_size=8))

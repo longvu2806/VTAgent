@@ -56,7 +56,7 @@ class RAGPipeline:
 
     def _generate(self, messages: list[tuple[str, str]]) -> tuple[AIMessageChunk, bool]:
         """Stream the reply and stop once ``timeout_s`` has passed (checked as tokens arrive).
-        Closing the stream closes the connection, which makes Ollama stop generating."""
+        Closing the stream closes the connection, which makes the model server stop generating."""
         deadline = None if self.timeout_s is None else time.monotonic() + self.timeout_s
         reply = None
         with closing(iter(self.llm.stream(messages))) as stream:

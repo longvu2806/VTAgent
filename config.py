@@ -18,13 +18,19 @@ class Settings(BaseSettings):
     qdrant_url: str | None = None  # unset: embedded Qdrant under data_dir/qdrant
     collection: str = "vtagent_docs_r0"
 
-    # Models served by Ollama.
+    # Models. model_server "ollama": Ollama's own API (the laptop). "openai": any OpenAI-compatible
+    # server such as vLLM (the GPU server, deploy/runpod/), the LLM and the embedding model at
+    # their own URLs; llm_model and embedding_model are then the names those servers expose.
     # Use 127.0.0.1, not localhost: on Windows, localhost tries IPv6 first and adds ~2 s
     # to every request to a server that listens on IPv4 only (Ollama, Qdrant in Docker).
+    model_server: Literal["ollama", "openai"] = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
+    llm_base_url: str = "http://127.0.0.1:8001/v1"  # model_server = openai
+    embedding_base_url: str = "http://127.0.0.1:8002/v1"  # model_server = openai
     llm_model: str = "qwen3.5:9b"
-    llm_num_ctx: int = 8192  # Ollama's default context silently truncates prompts
+    llm_num_ctx: int = 8192  # Ollama only: its default context silently truncates prompts; vLLM sets it at start
     llm_temperature: float = 0.0
+    llm_thinking: bool = False  # the model reasons before it answers: slower, aimed at accuracy (SDD AD-10)
     llm_timeout_s: float = 300  # stops an answer stuck in a repetition loop
     prompt: Literal["v1", "v2", "v3"] = "v2"  # answer prompt, core/prompting.py SYSTEM_PROMPTS
     embedding_model: str = "bge-m3"
@@ -47,7 +53,8 @@ class Settings(BaseSettings):
     bge_m3_precision: Literal["int8", "fp32"] = "int8"  # bge-m3 sparse model; int8 fits the RAM budget
     rerank: bool = False  # R4: cross-encoder reranks the candidates down to top_k
     reranker_repo: str = "onnx-community/bge-reranker-v2-m3-ONNX"
-    reranker_file: str = "onnx/model_int8.onnx"  # ONNX int8 on the CPU (SAD 6.6)
+    reranker_file: str = "onnx/model_int8.onnx"  # ONNX int8 on the CPU (SAD 6.6); onnx/model_fp16.onnx on a GPU
+    rerank_device: Literal["cpu", "cuda"] = "cpu"  # cuda needs onnxruntime-gpu in place of onnxruntime
     rerank_threshold: float | None = None  # None: keep top_k; set after calibrating on the eval sets
 
     # LLM judge of the eval's RAGAS metrics (any OpenAI-compatible API). Used only by
