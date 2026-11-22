@@ -46,7 +46,7 @@ const body = [
   table(["Động lực", "Nguồn", "Hệ quả cho thiết kế"], [
     ["Không dữ liệu nào rời khỏi máy", "NFR-01, NFR-02, BR16", "Mọi mô hình và kho dữ liệu chạy cục bộ, chỉ lắng nghe 127.0.0.1"],
     ["Một laptop, GPU tích hợp, khoảng 26 GB RAM dùng được; suy luận bị giới hạn bởi băng thông bộ nhớ", "P1 mục 5.4; NFR-09", "Mô hình 9B và 4B lượng tử hóa; tách pha nạp và truy vấn; giới hạn số lượt gọi mô hình mỗi câu hỏi"],
-    ["Độ chính xác quan trọng hơn tốc độ; trần p95 ba phút", "NFR-03–NFR-07", "Thêm bước kiểm chứng sau khi soạn; số vòng soạn lại có giới hạn"],
+    ["Độ chính xác quan trọng hơn tốc độ; thời gian chỉ đo và báo cáo, không có trần (AD-10)", "NFR-03–NFR-07", "Thêm bước kiểm chứng sau khi soạn; số vòng soạn lại có giới hạn để luôn kết thúc"],
     ["Nhiều thể loại tài liệu", "FR-09, FR-10", "Hồ sơ thể loại cấu hình được; xử lý chung khi không nhận diện được"],
     ["Trích dẫn tới điều khoản, trang; không ảo giác", "FR-15–FR-22", "Chia đoạn theo cấu trúc; nhãn [S#] ánh xạ về đoạn; kiểm tra tất định trước khi dùng mô hình"],
     ["Phép tính và rà soát phải chính xác, giải thích được", "BR11, BR14", "Mô hình chọn toán hạng, mã tính toán; quy tắc quyết định, mô hình diễn giải"],
@@ -128,7 +128,8 @@ const body = [
 │   ├── structure.py      cây cấu trúc, siêu dữ liệu, quan hệ văn bản
 │   ├── chunking.py       đoạn cha–con, tiêu đề ngữ cảnh
 │   ├── sparse.py         BM25
-│   ├── stores.py         repository: SQLite, Qdrant, thư mục tệp
+│   ├── stores.py         chỉ mục đoạn trong Qdrant: lọc tenant, phiên bản hiện hành, phạm vi
+│   ├── catalog.py        repository SQLite: tài liệu, phiên bản, hội thoại, lượt, tác vụ; migrations/
 │   ├── retrieval.py      tìm kiếm lai, lọc
 │   ├── rerank.py         cross-encoder ONNX
 │   ├── context.py        lắp ghép ngữ cảnh
@@ -142,10 +143,13 @@ const body = [
 │   ├── analyst/          agent.py, prompts.py, tools.py
 │   └── validator/        agent.py, prompts.py, checks.py, gate.py
 ├── api/
-│   ├── app.py            ứng dụng FastAPI, tệp tĩnh giao diện
-│   ├── context.py        RequestContext: tenant, (sau này) người dùng
-│   ├── jobs.py           hàng đợi tác vụ, sự kiện SSE
-│   └── routes/           documents, jobs, conversations, turns, reviews, rules, system
+│   ├── app.py            ứng dụng FastAPI: chặn Host, X-VTAgent, lỗi problem+json, tệp tĩnh giao diện
+│   ├── services.py       thành phần dùng chung; worker một luồng (mục 5.6)
+│   ├── jobs.py           tác vụ nạp: kiểm tra tệp, chạy, khôi phục sau khởi động lại
+│   ├── turns.py          một lượt hỏi: chạy đồ thị, lưu lượt và trích dẫn
+│   ├── stream.py         sự kiện đồ thị → UI Message Stream v1 (mục 9.3)
+│   ├── schemas.py, errors.py, exports.py
+│   └── routes/           documents, jobs, conversations, passages, system; sau: reviews, rules
 ├── web/                  React + TypeScript (Vite); bản build ở web/dist
 ├── scripts/install.ps1   cài đặt một lệnh
 └── tests/                unit/ (ngoại tuyến), eval/ (bộ đánh giá)`),
@@ -157,7 +161,7 @@ const body = [
     ["core.structure", "Dựng cây cấu trúc; nhận nội dung trích nguyên văn; siêu dữ liệu; quan hệ văn bản", "`build_tree(doc, profile) -> StructureTree`; `extract_metadata(...)`", "FR-10, FR-12, FR-13; BR13"],
     ["core.chunking", "Chia đoạn cha–con theo cây; tiêu đề ngữ cảnh", "`chunk(tree, params) -> list[Chunk]`", "FR-10; BR04"],
     ["core.sparse", "Tách từ và vector BM25", "`BM25Encoder.documents/query`", "FR-14"],
-    ["core.stores", "DocumentRepo, ChunkIndex, ConversationRepo, RuleRepo, ReviewRepo, JobRepo, FileStore", "Mục 4", "FR-01–FR-07, FR-28, FR-29"],
+    ["core.stores, core.catalog", "Chỉ mục đoạn trong Qdrant (core.stores); danh mục SQLite: tài liệu, phiên bản, hội thoại, lượt, trích dẫn, tác vụ, sau này quy tắc và rà soát (core.catalog); kho tệp", "Mục 4", "FR-01–FR-07, FR-28, FR-29"],
     ["core.retrieval", "Tìm kiếm lai có lọc tenant, phiên bản hiện hành, phạm vi", "`retrieve(query, scope, k) -> list[Hit]`", "FR-14; BR19, BR20"],
     ["core.rerank", "Chấm lại ứng viên", "`rerank(query, hits, top) -> list[Hit]`", "NFR-03"],
     ["core.context", "Mở rộng con → cha trong ngân sách; gắn nhãn [S#]", "`assemble(hits, budget) -> EvidencePack`", "FR-16, FR-19"],
@@ -216,8 +220,12 @@ CREATE TABLE document_versions (
   seq INTEGER NOT NULL, status TEXT NOT NULL,             -- processing | ready | failed
   error TEXT, file_name TEXT NOT NULL, file_ext TEXT NOT NULL, file_size INTEGER NOT NULL,
   stored_path TEXT NOT NULL,                              -- tương đối theo data_dir, dấu /
-  pages INTEGER, collection TEXT NOT NULL, ingested_at TEXT NOT NULL,
+  pages INTEGER, ingested_at TEXT NOT NULL,
   UNIQUE (document_id, seq));
+CREATE TABLE indexed_versions (                           -- một phiên bản nằm ở mỗi collection đã nạp nó
+  version_id TEXT NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+  collection TEXT NOT NULL, n_chunks INTEGER NOT NULL, indexed_at TEXT NOT NULL,
+  PRIMARY KEY (version_id, collection));
 
 CREATE TABLE document_relations (
   source_document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -235,11 +243,12 @@ CREATE TABLE structure_nodes (
 CREATE INDEX nodes_lookup ON structure_nodes(version_id, level, number);
 
 CREATE TABLE conversations (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
-                            title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                            title TEXT, pinned INTEGER NOT NULL DEFAULT 0,
+                            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE turns (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL, question TEXT NOT NULL, question_type TEXT,
-  answer TEXT,
+  answer TEXT, missing TEXT,           -- missing: phần chưa trả lời được (partial)
   status TEXT NOT NULL,                -- processing | answered | partial | not_found | failed
   warnings TEXT, config TEXT NOT NULL,                    -- JSON; config: cấu hình đã dùng (NFR-12)
   latency_ms INTEGER, created_at TEXT NOT NULL);
@@ -250,6 +259,7 @@ CREATE TABLE citations (
   turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE, label TEXT NOT NULL,
   chunk_id TEXT NOT NULL,                                 -- khóa logic sang Qdrant
   document_id TEXT NOT NULL, version_id TEXT NOT NULL,    -- chép để xóa theo BR10 không cần Qdrant
+  section TEXT NOT NULL, page INTEGER,                    -- chép để hiển thị lịch sử khi đổi collection
   sentence_index INTEGER, verdict TEXT NOT NULL,          -- supported | unsupported | unchecked
   PRIMARY KEY (turn_id, label));
 CREATE INDEX citations_document ON citations(document_id);
@@ -272,7 +282,9 @@ CREATE TABLE finding_chunks (finding_id TEXT REFERENCES findings(id) ON DELETE C
 CREATE TABLE ingest_jobs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id),
   file_name TEXT NOT NULL,
   status TEXT NOT NULL,                -- queued | running | done | duplicate | failed
-  stage TEXT, progress REAL, error TEXT, document_id TEXT,
+  stage TEXT, progress REAL, error_code TEXT, error TEXT,
+  upload_path TEXT,                    -- tệp tải lên chờ nạp, để làm tiếp sau khởi động lại
+  document_id TEXT, version_id TEXT,   -- document_id đặt trước khi tải phiên bản mới
   created_at TEXT NOT NULL, finished_at TEXT);`),
   P("Lược đồ được quản lý bằng các tệp migration đánh số; ứng dụng kiểm tra và áp dụng migration lúc khởi động. Câu lệnh SQL chỉ dùng cú pháp chuẩn, để khi mở rộng có thể chuyển sang PostgreSQL mà chỉ phải sửa lớp repository."),
   H2("4.4. Collection Qdrant"),
@@ -315,7 +327,7 @@ CREATE TABLE ingest_jobs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCE
   H1("5. Thiết kế chi tiết luồng nạp"),
   H2("5.1. Các bước"),
   table(["#", "Bước", "Module", "Đầu ra", "Khi lỗi"], [
-    ["A1", "Kiểm tra tệp: đuôi, chữ ký tệp, kích thước, giới hạn giải nén DOCX", "api", "Tệp hợp lệ", "415 hoặc 413, không tạo tác vụ"],
+    ["A1", "Kiểm tra tệp: đuôi, chữ ký tệp, kích thước, giới hạn giải nén DOCX", "api", "Tệp hợp lệ", "Tác vụ `failed` ngay, mã `unsupported_format` hoặc `file_too_large`; các tệp khác cùng lần tải vẫn được nạp"],
     ["A2", "Tính mã băm; tra `document_versions`", "agents.rag", "version_id", "Đã có: tác vụ `duplicate`, trả định danh có sẵn"],
     ["A3", "Đọc tệp thành trang và khối; kiểm tra lớp văn bản", "core.parsing", "ParsedDocument", "Không có lớp văn bản hoặc tệp hỏng: `failed` kèm lý do"],
     ["A4", "Nhận diện thể loại", "core.genres", "Thể loại, độ tin cậy", "Không nhận diện được: thể loại `unknown`, xử lý chung"],
@@ -446,18 +458,18 @@ CREATE TABLE ingest_jobs (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCE
     "**quality_gate** (mục 7.9): tỉ lệ câu thiếu căn cứ (hợp kết quả của hai bước trên) ≤ 0,20 thì `accept`; nếu không và `round < 2` thì `retry`; còn lại `give_up`.",
     "**finalize**: ghép câu trả lời cuối; câu thiếu căn cứ được đánh dấu cảnh báo (BR07); lưu lượt hỏi đáp và trích dẫn trong một giao dịch.",
   ]),
-  P("Khi `retry`, đồ thị quay lại đúng tác tử đã soạn. RAG ở vòng 2 mở rộng ứng viên của câu hỏi gốc, thêm truy vấn bổ sung do mô hình phụ sinh cho các câu thiếu căn cứ, rồi soạn lại với danh sách câu thiếu làm phản hồi; chỉ đưa 3 nguồn và giới hạn số token đầu ra để giữ NFR-07. Analyst ở vòng 2 lấy thêm bằng chứng cho các câu thiếu và diễn giải lại; kế hoạch công cụ không lập lại. Khi check_numbers đã chỉ ra đúng con số sai mà nguồn có con số đúng, vòng 2 chỉ soạn lại, không truy xuất lại."),
+  P("Khi `retry`, đồ thị quay lại đúng tác tử đã soạn. RAG ở vòng 2 mở rộng ứng viên của câu hỏi gốc, thêm truy vấn bổ sung do mô hình phụ sinh cho các câu thiếu căn cứ, rồi soạn lại với danh sách câu thiếu làm phản hồi. Analyst ở vòng 2 lấy thêm bằng chứng cho các câu thiếu và diễn giải lại; kế hoạch công cụ không lập lại. Khi check_numbers đã chỉ ra đúng con số sai mà nguồn có con số đúng, vòng 2 chỉ soạn lại, không truy xuất lại."),
   H2("6.6. Hội thoại"),
   P("Mỗi lượt hỏi đáp là một dòng `turns`; trích dẫn là các dòng `citations`. Khi bắt đầu một lượt, API đọc 2–3 lượt gần nhất của hội thoại (câu hỏi và câu trả lời, cắt tối đa 500 token) đưa vào `history`. Xóa hội thoại xóa dây chuyền các lượt và trích dẫn (FR-29). Lịch sử không chứa văn bản bằng chứng, chỉ nhãn và khóa đoạn; xem lại trích dẫn đọc đoạn từ Qdrant."),
-  H2("6.7. Ngân sách lượt gọi mô hình và thời gian"),
-  P("Trần p95 ba phút (NFR-07) được phân bổ thành ngân sách cho từng bước. Đây là mục tiêu thiết kế; số đo thật thay thế bảng này ngay khi đồ thị chạy được, và luồng nào vượt ngân sách thì áp dụng các biện pháp ở cột cuối."),
-  table(["Luồng", "Lượt gọi mô hình", "Ngân sách p95", "Nếu vượt"], [
-    ["Tra cứu, 1 vòng", "định tuyến, soạn, kiểm chứng: 3", "≤ 120 s", "Giảm số ứng viên xếp hạng lại; giảm ngân sách ngữ cảnh"],
-    ["Tra cứu, 2 vòng", "thêm truy vấn bổ sung, soạn lại, kiểm chứng lại: 6", "≤ 180 s", "Vòng 2 chỉ 3 nguồn, giới hạn token đầu ra; bỏ vòng 2 khi chỉ sai số liệu"],
-    ["Đếm, liệt kê (dàn ý)", "định tuyến, lập kế hoạch, diễn giải ngắn, kiểm chứng: 4", "≤ 90 s", ""],
-    ["So sánh hai tài liệu", "định tuyến, lập kế hoạch, diễn giải, kiểm chứng: 4; vòng 2 thêm 2", "≤ 180 s", "Giới hạn số tài liệu so sánh mỗi lượt"],
-  ], [0.2, 0.36, 0.14, 0.3], { size: 19 }),
-  caption("Bảng 6.5. Ngân sách theo luồng"),
+  H2("6.7. Số lượt gọi mô hình và thời gian"),
+  P("Không đặt trần thời gian (AD-10): thời gian và số lượt gọi mô hình của mỗi luồng được đo và báo cáo cùng độ chính xác, để thấy mỗi lượt gọi thêm đổi được bao nhiêu độ chính xác. Số lượt gọi dưới đây là ước tính thiết kế; số đo thật thay thế bảng này khi đồ thị chạy được."),
+  table(["Luồng", "Lượt gọi mô hình"], [
+    ["Tra cứu, 1 vòng", "định tuyến, soạn, kiểm chứng: 3"],
+    ["Tra cứu, 2 vòng", "thêm truy vấn bổ sung, soạn lại, kiểm chứng lại: 6"],
+    ["Đếm, liệt kê (dàn ý)", "định tuyến, lập kế hoạch, diễn giải ngắn, kiểm chứng: 4"],
+    ["So sánh hai tài liệu", "định tuyến, lập kế hoạch, diễn giải, kiểm chứng: 4; vòng 2 thêm 2"],
+  ], [0.4, 0.6], { size: 19 }),
+  caption("Bảng 6.5. Số lượt gọi mô hình theo luồng"),
   H2("6.8. Xử lý lỗi"),
   table(["Tình huống", "Phát hiện tại", "Xử lý"], [
     ["Tệp không có lớp văn bản, sai định dạng, hỏng", "A1, A3", "Từ chối kèm lý do; tệp khác vẫn được nạp"],
@@ -654,7 +666,7 @@ def calculate(expression: str, operands: dict[str, Operand]) -> Decimal:
     ["POST", "/conversations", "Tạo hội thoại", "201 ConversationOut", "UC12"],
     ["GET", "/conversations", "Danh sách hội thoại", "200 Page[ConversationOut]", "UC12; FR-29"],
     ["GET", "/conversations/{id}", "Hội thoại kèm các lượt", "200 ConversationDetail", "UC12"],
-    ["PATCH", "/conversations/{id}", "Đổi tiêu đề", "200 ConversationOut", "UC12"],
+    ["PATCH", "/conversations/{id}", "Đổi tiêu đề, ghim; body `{title, pinned}`", "200 ConversationOut", "UC12"],
     ["DELETE", "/conversations/{id}", "Xóa hội thoại", "204", "UC12; FR-29"],
     ["POST", "/conversations/{id}/turns", "Đặt câu hỏi; body `{question, document_ids}`", "200 SSE (UI Message Stream v1)", "UC05, UC10; FR-14"],
     ["GET", "/turns/{id}", "Kết quả một lượt", "200 TurnOut", "UC05"],
@@ -702,8 +714,8 @@ def calculate(expression: str, operands: dict[str, Operand]) -> Decimal:
     ["400", "invalid_request", "Tham số sai kiểu, thiếu trường"],
     ["404", "not_found", "Định danh không tồn tại trong tenant"],
     ["409", "conflict", "Tài liệu đang xóa; phiên bản đang xử lý"],
-    ["413", "file_too_large", "Vượt `max_upload_mb` hoặc giới hạn giải nén"],
-    ["415", "unsupported_format", "Đuôi hoặc chữ ký tệp không thuộc định dạng hỗ trợ (BR01)"],
+    ["413", "file_too_large", "Vượt `max_upload_mb` hoặc giới hạn giải nén; khi tải lên, báo qua tác vụ `failed` (mục 5.1)"],
+    ["415", "unsupported_format", "Đuôi hoặc chữ ký tệp không thuộc định dạng hỗ trợ (BR01); khi tải lên, báo qua tác vụ `failed`"],
     ["422", "no_text_layer, unreadable_file", "Lỗi khi nạp, trả qua sự kiện `failed` của tác vụ"],
     ["429", "queue_full", "Hàng đợi tác vụ đầy"],
     ["503", "model_unavailable, index_unavailable", "Ollama hoặc Qdrant không sẵn sàng"],
@@ -1017,6 +1029,7 @@ VTAGENT_MAX_UPLOAD_MB=50`),
     ["AD-07", "Qdrant cho đoạn văn với dense, sparse, RRF trong một truy vấn", "Tìm kiếm lai có sẵn; lọc payload", "Chốt"],
     ["AD-08", "Lịch sử hội thoại trong bảng riêng; không dùng checkpointer ở phiên bản đầu", "Truy vấn và xóa theo BR10 dễ; trạng thái đồ thị chứa văn bản bằng chứng", "Chốt"],
     ["AD-09", "Định danh: tài liệu UUID4, phiên bản mã băm nội dung, đoạn UUID5", "Chống trùng; ghi lại an toàn", "Chốt"],
+    ["AD-10", "Không đặt trần thời gian trả lời; đo và báo cáo p50, p95 (thay trần p95 ba phút của NFR-07, 22/11/2026)", "Độ chính xác là mục tiêu duy nhất; thời gian là chi phí được báo cáo. Giới hạn 300 giây mỗi lượt gọi mô hình vẫn giữ để dừng vòng lặp lặp chữ", "Chốt"],
     ["AD-10", "Thứ tự ghi, xóa giữa các kho; dọn dẹp lúc khởi động", "Không có giao dịch chung giữa các kho", "Chốt"],
     ["AD-11", "tenant_id trên mọi dữ liệu gốc và mọi đoạn", "NFR-16", "Chốt"],
     ["AD-12", "Một worker xử lý tuần tự nạp và truy vấn", "Một người dùng; bộ nhớ không đủ cho hai pha cùng lúc", "Chốt"],
@@ -1042,12 +1055,14 @@ VTAGENT_MAX_UPLOAD_MB=50`),
 build(process.argv[2], {
   phase: "GIAI ĐOẠN 4. SYSTEM DESIGN",
   subtitle: "Software Design Document — Tài liệu thiết kế hệ thống",
-  headerText: "VTAgent · Giai đoạn 4. System Design (SDD) · v1.1",
+  headerText: "VTAgent · Giai đoạn 4. System Design (SDD) · v1.3",
   info: [
     ["Tài liệu", "Kiến trúc tổng thể, HLD, LLD, ERD, sơ đồ tuần tự, đặc tả API, hợp đồng dữ liệu, đặc tả thuật toán, thiết kế bảo mật, kiến trúc triển khai"],
-    ["Phiên bản", "1.1"],
+    ["Phiên bản", "1.3"],
+    ["Thay đổi so với 1.2", "Bỏ trần p95 ba phút: thời gian chỉ đo và báo cáo, độ chính xác được ưu tiên (AD-10; mục 2.1, 6.5, 6.7)"],
+    ["Thay đổi so với 1.1", "Đối chiếu với API đã hiện thực: cấu trúc `api/` và `core/catalog.py` (mục 3.1); bảng `indexed_versions` thay cột `document_versions.collection` vì mỗi cấu hình thực nghiệm nạp cùng phiên bản vào collection riêng; thêm `conversations.pinned`, `turns.missing`, `citations.section`, `citations.page`, các cột khôi phục của `ingest_jobs` (mục 4.3); tệp bị từ chối thành tác vụ `failed` (mục 5.1); PATCH hội thoại nhận `pinned` (mục 9.2); tenant mặc định đặt trong `agent_factory` cho tới khi có xác thực"],
     ["Thay đổi so với 1.0", "Luồng câu trả lời theo UI Message Stream v1 của AI SDK (mục 9.3); bản nháp chạy trong khung thu gọn, sửa AD-05; stack giao diện cụ thể (mục 2.5)"],
-    ["Ngày", "20/11/2026"],
+    ["Ngày", "22/11/2026"],
     ["Tài liệu trước · sau", "Giai đoạn 3. System Analysis (SRS v1.3) · Giai đoạn 5. Implementation"],
   ],
   body,
