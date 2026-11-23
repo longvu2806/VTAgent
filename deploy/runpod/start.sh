@@ -38,10 +38,14 @@ wait_for qdrant http://127.0.0.1:6333/readyz "$W/logs/qdrant.log"
 
 # No official FP8 checkpoint: vLLM quantizes the weights to FP8 as it loads them (on Ampere a
 # weight-only kernel). The qwen3 reasoning parser keeps the thinking out of the answer text;
-# whether to think is chosen per request (VTAGENT_LLM_THINKING).
+# whether to think is chosen per request (VTAGENT_LLM_THINKING). A request's thinking_token_budget
+# (VTAGENT_LLM_THINKING_BUDGET) ends the thinking with REASONING_END, Qwen's own wording for a cut.
+REASONING_END='\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n'
 nohup "$W/venv-vllm/bin/vllm" serve "$LLM_MODEL" --host 127.0.0.1 --port 8000 \
   --quantization fp8 --gpu-memory-utilization "$LLM_MEMORY" --max-model-len "$MAX_LEN" \
-  --max-num-seqs "$MAX_SEQS" --reasoning-parser qwen3 > "$W/logs/vllm-llm.log" 2>&1 &
+  --max-num-seqs "$MAX_SEQS" --reasoning-parser qwen3 \
+  --reasoning-config "{\"reasoning_start_str\": \"<think>\", \"reasoning_end_str\": \"$REASONING_END\"}" \
+  > "$W/logs/vllm-llm.log" 2>&1 &
 # One at a time: each vLLM sizes its cache from the memory free when it starts.
 wait_for "vllm $LLM_MODEL" http://127.0.0.1:8000/health "$W/logs/vllm-llm.log"
 

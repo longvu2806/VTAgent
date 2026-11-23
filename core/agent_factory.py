@@ -113,6 +113,8 @@ def _llm(s: Settings) -> BaseChatModel:
                 if s.llm_thinking else {"temperature": s.llm_temperature})
     top_k = {"top_k": s.llm_thinking_top_k} if s.llm_thinking else {}
     if s.model_server == "openai":
+        budget = ({"thinking_token_budget": s.llm_thinking_budget}
+                  if s.llm_thinking and s.llm_thinking_budget is not None else {})
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
@@ -123,7 +125,7 @@ def _llm(s: Settings) -> BaseChatModel:
             presence_penalty=s.llm_thinking_presence_penalty if s.llm_thinking else None,
             stream_usage=True,  # token counts arrive in the last streamed chunk
             # Qwen's chat template switch; vLLM's reasoning parser keeps the thinking out of the answer
-            extra_body={"chat_template_kwargs": {"enable_thinking": s.llm_thinking}, **top_k},
+            extra_body={"chat_template_kwargs": {"enable_thinking": s.llm_thinking}, **top_k, **budget},
         )
     from langchain.chat_models import init_chat_model
 

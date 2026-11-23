@@ -53,6 +53,14 @@ def test_thinking_samples_as_qwen_advises_and_plain_answers_stay_greedy():
     assert (local.temperature, local.top_p, local.top_k) == (1.0, 0.95, 20)
 
 
+def test_a_thinking_budget_reaches_the_model_server_only_when_thinking():
+    capped = agent_factory._llm(_settings(model_server="openai", llm_thinking=True, llm_thinking_budget=2048))
+    plain = agent_factory._llm(_settings(model_server="openai", llm_thinking=False, llm_thinking_budget=2048))
+
+    assert capped.extra_body["thinking_token_budget"] == 2048
+    assert "thinking_token_budget" not in plain.extra_body
+
+
 def test_an_openai_compatible_server_embeds_plain_text():
     embedder = agent_factory._embedder(_settings(model_server="openai", embedding_model="BAAI/bge-m3",
                                                  embedding_base_url="http://127.0.0.1:8002/v1"))

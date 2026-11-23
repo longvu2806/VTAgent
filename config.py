@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     llm_thinking_top_p: float = 0.95
     llm_thinking_top_k: int = 20
     llm_thinking_presence_penalty: float = 1.5
+    llm_thinking_budget: int | None = None  # model server only: thinking tokens before vLLM makes the model answer
     llm_timeout_s: float = 300  # stops an answer stuck in a repetition loop
     prompt: Literal["v1", "v2", "v3"] = "v2"  # answer prompt, core/prompting.py SYSTEM_PROMPTS
     embedding_model: str = "bge-m3"
