@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from config import Settings
 from config import settings as default_settings
-from core.chunking import split_pages_fixed, split_structured
+from core.chunking import context_header, split_pages_fixed, split_structured
 from core.context import assemble
 from core.graph import QueryGraph
 from core.ingestion import Ingestor
@@ -34,6 +34,7 @@ BM25_AVG_LEN = 279  # mean BM25 tokens per child chunk, measured on the 9-docume
 RERANK_MAX_TOKENS = 512  # question + child chunk (children are at most 400 tokens)
 RERANK_BATCH = 8
 MAX_ROUNDS = 2  # drafts per question: the first and one retry (SAD Table 9.1)
+CONTEXT_HEADER_TOKENS = 40  # R2 header limit (SAD Table 6.3)
 NO_KEY = "EMPTY"  # a local OpenAI-compatible server (vLLM) takes any API key
 
 
@@ -45,6 +46,10 @@ def build_ingestor(s: Settings = default_settings) -> Ingestor:
         chunker = partial(split_structured, tokenizer=tokenizer, child_min=s.child_min_tokens,
                           child_max=s.child_max_tokens, parent_max=s.parent_max_tokens,
                           fallback_max=FALLBACK_CHUNK_TOKENS)
+    header = None
+    if s.contextual_headers:
+        header = partial(context_header, max_tokens=CONTEXT_HEADER_TOKENS,
+                         count_tokens=lambda text: len(tokenizer.encode(text, add_special_tokens=False).ids))
     return Ingestor(
         files_dir=s.data_dir / "files",
         chunker=chunker,
@@ -52,6 +57,7 @@ def build_ingestor(s: Settings = default_settings) -> Ingestor:
         store=_vector_store(s),
         registry=build_registry(s),
         sparse_encoder=sparse_encoder(s),
+        context_header=header,
     )
 
 
@@ -155,7 +161,8 @@ def _embedder(s: Settings) -> Embeddings:
 def _vector_store(s: Settings) -> VectorStore:
     s.data_dir.mkdir(parents=True, exist_ok=True)
     sparse_idf = {"none": None, "bm25": True, "bge-m3": False}[s.sparse]  # bge-m3 weights are learned
-    return VectorStore(_qdrant(s.qdrant_url, str(s.data_dir / "qdrant")), s.collection, sparse_idf=sparse_idf)
+    return VectorStore(_qdrant(s.qdrant_url, str(s.data_dir / "qdrant")), s.collection, sparse_idf=sparse_idf,
+                       contextual_headers=s.contextual_headers)
 
 
 @cache

@@ -112,7 +112,26 @@ class _Doc:
             offset += len(text) + 2
         self.text = "\n\n".join(texts)
         self.lines = [(m.start(), _clean(m.group())) for m in re.finditer(r"(?m)^.*$", self.text)]
+        self.quoted = self._quoted_lines()
         self.token_starts = [o[0] for o in tokenizer.encode(self.text, add_special_tokens=False).offsets]
+
+    def _quoted_lines(self) -> set[int]:
+        """Starts of the lines inside a multi-line “…” block: text an amending law quotes from
+        another document, which opens no Điều, Khoản or Điểm of this one (SDD 5.4, FR-12).
+        A block that never closes, or runs into the next opening quote, quotes one line only."""
+        quoted, i = set(), 0
+        while i < len(self.lines):
+            clean = self.lines[i][1]
+            if clean.startswith("“") and "”" not in clean[1:]:
+                for j in range(i + 1, len(self.lines)):
+                    if self.lines[j][1].startswith("“"):
+                        break
+                    if "”" in self.lines[j][1]:
+                        quoted.update(s for s, _ in self.lines[i + 1 : j + 1])
+                        i = j
+                        break
+            i += 1
+        return quoted
 
     # --- basics ---
 
@@ -132,6 +151,8 @@ class _Doc:
         """(start, title) per article. A Chương / Mục heading opens the next article's block."""
         blocks, heading_at = [], None
         for start, clean in self.lines:
+            if start in self.quoted:
+                continue
             if _HEADING.match(clean):
                 heading_at = start if heading_at is None else heading_at
             elif _ARTICLE.match(clean):
@@ -144,7 +165,8 @@ class _Doc:
     def block_pieces(self, span: tuple[int, int], title: str, child_min: int, child_max: int,
                      parent_max: int) -> list[Piece]:
         start, end = span
-        clauses = [(s, _CLAUSE.match(c).group(1)) for s, c in self.lines if start < s < end and _CLAUSE.match(c)]
+        clauses = [(s, _CLAUSE.match(c).group(1)) for s, c in self.lines
+                   if start < s < end and s not in self.quoted and _CLAUSE.match(c)]
         cuts = [s for s, _ in clauses[1:]]  # the lead-in joins Khoản 1
         segments = _merge_small(list(zip([start, *cuts], [*cuts, end])), self.count, child_min)
         children = [c for seg in segments for c in self.fit(seg, child_max, [self.points, self.paragraphs, self.sentences])
@@ -205,7 +227,7 @@ class _Doc:
         return list(zip([start, *cuts], [*cuts, end]))
 
     def points(self, start: int, end: int) -> list[int]:
-        return [s for s, c in self.lines if start < s < end and _POINT.match(c)]
+        return [s for s, c in self.lines if start < s < end and s not in self.quoted and _POINT.match(c)]
 
     def md_headings(self, start: int, end: int) -> list[int]:
         return [s for s, _ in self.lines if start < s < end and self.text.startswith("#", s)]
@@ -215,6 +237,36 @@ class _Doc:
 
     def sentences(self, start: int, end: int) -> list[int]:
         return [m.end() for m in _SENTENCE.finditer(self.text, start, end) if m.end() < end]
+
+
+def context_header(title: str, number: str, section: str, count_tokens: Callable[[str], int],
+                   max_tokens: int) -> str:
+    """R2 contextual header, embedded with the chunk (SDD 5.5):
+    "[Luật đầu tư (24/2026/QH16) › Điều 2. Điều khoản thi hành › Khoản 1]". Over ``max_tokens``
+    the longer of the document title and the article name loses its last word, in turn, so both
+    keep their first words; the document number and the Điều / Khoản numbers always stay.
+    Empty when there is nothing to name."""
+    title_words = title.split()
+    article, _, below = section.partition(SECTION_SEP)
+    head, dot, name = article.partition(". ")
+    name_words = name.split()
+
+    def render() -> str:
+        doc = " ".join(title_words) + ("…" if len(title_words) < len(title.split()) else "")
+        doc = f"{doc} ({number})" if doc and number else doc or number
+        art = head + (f"{dot}{' '.join(name_words)}" if name_words else "")
+        art += "…" if len(name_words) < len(name.split()) else ""
+        path = SECTION_SEP.join(p for p in (doc, art, below) if p)
+        return f"[{path}]" if path else ""
+
+    header = render()
+    while count_tokens(header) > max_tokens and (len(title_words) > 1 or name_words):
+        if len(title_words) > 1 and len(title_words) >= len(name_words):
+            title_words.pop()
+        else:
+            name_words.pop()
+        header = render()
+    return header
 
 
 def _clean(line: str) -> str:

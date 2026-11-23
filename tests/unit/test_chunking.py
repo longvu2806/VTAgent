@@ -1,6 +1,6 @@
 import pytest
 
-from core.chunking import split_fixed, split_structured
+from core.chunking import context_header, split_fixed, split_structured
 from core.models import PageText
 
 WORDS = " ".join(f"w{i}" for i in range(10))
@@ -150,3 +150,54 @@ def test_document_without_articles_falls_back_to_paragraph_chunks(word_tokenizer
 
     assert [p.text for p in pieces] == ["Biên bản họp", "Đoạn một a b", "c.", "Đoạn hai d e."]
     assert all(p.parent_key is None and p.section == "" for p in pieces)
+
+
+AMENDING_LAW = """Điều 2. Điều khoản thi hành
+1. Luật này có hiệu lực từ ngày 01 tháng 3 năm 2027.
+2. Sửa đổi khoản 1 và khoản 2 Điều 88 của Luật Xây dựng như sau:
+“1. Cá nhân đảm nhận chức danh phải có chứng chỉ.
+2. Tổ chức tham gia hoạt động xây dựng phải có năng lực.
+Điều 89. Điều kiện của tổ chức.”.
+3. Bãi bỏ điểm a khoản 1 Điều 90 của Luật Xây dựng."""
+
+
+def test_text_an_amending_law_quotes_opens_no_article_or_clause(word_tokenizer):
+    pieces = _structured([AMENDING_LAW], word_tokenizer)
+
+    assert [p.section for p in pieces] == [f"Điều 2. Điều khoản thi hành › Khoản {n}" for n in (1, 2, 3)]
+    assert pieces[1].text.endswith("Điều 89. Điều kiện của tổ chức.”.")  # the quote stays inside Khoản 2
+
+
+def test_a_quote_that_never_closes_quotes_its_own_line_only(word_tokenizer):
+    law = "Điều 2. X\n1. a\n2. Sửa đổi như sau:\n“1. b\n3. c"
+
+    assert [p.section for p in _structured([law], word_tokenizer)] == ["Điều 2. X › Khoản 1", "Điều 2. X › Khoản 2",
+                                                                       "Điều 2. X › Khoản 3"]
+
+
+# --- contextual headers (R2) ---
+
+def _words(text):
+    return len(text.split())
+
+
+def test_the_header_names_the_document_and_the_section():
+    header = context_header("Luật đầu tư", "24/2026/QH16", "Điều 2. Điều khoản thi hành › Khoản 1", _words, 40)
+
+    assert header == "[Luật đầu tư (24/2026/QH16) › Điều 2. Điều khoản thi hành › Khoản 1]"
+
+
+def test_a_long_header_trims_title_and_article_name_in_turn_but_keeps_the_numbers():
+    title = "Luật sửa đổi, bổ sung một số điều của luật thuế thu nhập cá nhân và luật thuế giá trị gia tăng"
+    section = "Điều 1. Sửa đổi, bổ sung khoản 1 Điều 7 của Luật Thuế thu nhập cá nhân › Khoản 1"
+
+    short = context_header(title, "09/2026/QH16", section, _words, 14)
+    shorter = context_header(title, "09/2026/QH16", section, _words, 6)
+
+    assert short == "[Luật sửa đổi,… (09/2026/QH16) › Điều 1. Sửa đổi, bổ sung… › Khoản 1]"
+    assert shorter == "[Luật… (09/2026/QH16) › Điều 1… › Khoản 1]"
+
+
+def test_without_document_metadata_the_header_is_the_section_or_nothing():
+    assert context_header("", "", "Điều 5. Phạt vi phạm", _words, 40) == "[Điều 5. Phạt vi phạm]"
+    assert context_header("", "", "", _words, 40) == ""

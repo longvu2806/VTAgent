@@ -25,12 +25,15 @@ class VectorStore:
     search (R3) fused with the dense ranking by RRF (SAD 6.5).
 
     ``sparse_idf``: None = dense only; True = sparse with IDF applied by Qdrant (BM25);
-    False = sparse with learned weights, no IDF (bge-m3)."""
+    False = sparse with learned weights, no IDF (bge-m3). ``contextual_headers``: the chunks were
+    embedded with their R2 header."""
 
-    def __init__(self, client: QdrantClient, collection: str, sparse_idf: bool | None = None):
+    def __init__(self, client: QdrantClient, collection: str, sparse_idf: bool | None = None,
+                 contextual_headers: bool = False):
         self.client = client
         self.collection = collection
         self.sparse_idf = sparse_idf
+        self.contextual_headers = contextual_headers
         self._layout_checked = False
 
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]], sparse: list[SparseVector] | None = None) -> None:
@@ -46,6 +49,8 @@ class VectorStore:
                 vectors_config={DENSE: models.VectorParams(size=len(vectors[0]), distance=models.Distance.COSINE)},
                 sparse_vectors_config=sparse_config,
             )
+            for field in ("document_id", "version_id"):  # filters by document or version (SDD 4.4)
+                self.client.create_payload_index(self.collection, field, field_schema=models.PayloadSchemaType.KEYWORD)
         self._check_layout()
         points = []
         for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True)):
@@ -98,6 +103,13 @@ class VectorStore:
             raise CollectionMismatchError(
                 f"collection {self.collection!r} holds {_layout(built)}, but the configuration needs "
                 f"{_layout(self.sparse_idf)}; set VTAGENT_COLLECTION to a collection built for this configuration")
+        points, _ = self.client.scroll(self.collection, limit=50, with_payload=["header"])
+        headers = any(p.payload.get("header") for p in points)
+        if points and headers != self.contextual_headers:
+            built, needed = ("with", "without") if headers else ("without", "with")
+            raise CollectionMismatchError(
+                f"collection {self.collection!r} holds chunks {built} contextual headers (R2), but the configuration "
+                f"needs them {needed}; set VTAGENT_COLLECTION to a collection built for this configuration")
         self._layout_checked = True
 
 
@@ -115,22 +127,22 @@ class DocumentRegistry:
         self.conn = sqlite3.connect(db_path)
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS documents ("
-            " doc_id TEXT NOT NULL, collection TEXT NOT NULL, source TEXT NOT NULL,"
+            " version_id TEXT NOT NULL, collection TEXT NOT NULL, source TEXT NOT NULL,"
             " stored_path TEXT NOT NULL, n_chunks INTEGER NOT NULL, ingested_at TEXT NOT NULL,"
-            " PRIMARY KEY (doc_id, collection))"
+            " PRIMARY KEY (version_id, collection))"
         )
 
-    def get(self, doc_id: str) -> DocumentRecord | None:
+    def get(self, version_id: str) -> DocumentRecord | None:
         row = self.conn.execute(
-            "SELECT doc_id, source, stored_path, n_chunks, ingested_at FROM documents"
-            " WHERE doc_id = ? AND collection = ?",
-            (doc_id, self.collection),
+            "SELECT version_id, source, stored_path, n_chunks, ingested_at FROM documents"
+            " WHERE version_id = ? AND collection = ?",
+            (version_id, self.collection),
         ).fetchone()
         return DocumentRecord(*row) if row else None
 
     def documents(self) -> list[DocumentRecord]:
         rows = self.conn.execute(
-            "SELECT doc_id, source, stored_path, n_chunks, ingested_at FROM documents WHERE collection = ?",
+            "SELECT version_id, source, stored_path, n_chunks, ingested_at FROM documents WHERE collection = ?",
             (self.collection,),
         ).fetchall()
         return [DocumentRecord(*row) for row in rows]
@@ -139,6 +151,6 @@ class DocumentRegistry:
         with self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO documents VALUES (?, ?, ?, ?, ?, ?)",
-                (record.doc_id, self.collection, record.source, record.stored_path,
+                (record.version_id, self.collection, record.source, record.stored_path,
                  record.n_chunks, record.ingested_at),
             )

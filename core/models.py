@@ -14,7 +14,7 @@ class PageText:
 @dataclass(frozen=True)
 class Chunk:
     chunk_id: str
-    doc_id: str
+    version_id: str  # the indexed file: the first 32 hex digits of its SHA-256 (SDD 4.6)
     source: str  # original file name, shown in citations
     page: int | None
     index: int  # position of the chunk within its document
@@ -22,6 +22,10 @@ class Chunk:
     section: str = ""  # place in the document's structure, e.g. "Điều 8. … › Khoản 8" (R1+)
     parent_id: str | None = None  # children of one parent share it (R1+)
     parent_text: str = ""  # the parent's text, stored with each child (SAD 7.x)
+    document_id: str = ""  # the document the version belongs to; one version per document here
+    title: str = ""  # the document's title, read from its opening (R2+)
+    doc_number: str = ""  # the document's number, e.g. "389/2026/NĐ-CP" (R2+)
+    header: str = ""  # R2 contextual header, embedded with the text; text itself stays verbatim
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,7 @@ class Answer:
 
 @dataclass(frozen=True)
 class DocumentRecord:
-    doc_id: str
+    version_id: str
     source: str
     stored_path: str
     n_chunks: int

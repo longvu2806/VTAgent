@@ -3,6 +3,7 @@
 import re
 
 from core.models import Chunk, Citation, RetrievedChunk
+from core.structure import document_label
 
 NOT_FOUND = "Không tìm thấy thông tin này trong tài liệu đã nạp."
 
@@ -66,6 +67,8 @@ def extract_citations(answer: str, sources: list[RetrievedChunk]) -> list[Citati
 
 
 def _source_line(chunk: Chunk) -> str:
-    """'contract.pdf · Điều 5. Phạt vi phạm › Khoản 1 · page 6' (SAD 6.7)."""
+    """'contract.pdf · Điều 5. Phạt vi phạm › Khoản 1 · page 6' (SAD 6.7); from R2 the document's
+    title and number replace the file name (SDD 6.7)."""
     page = None if chunk.page is None else f"page {chunk.page}"
-    return " · ".join(part for part in (chunk.source, chunk.section, page) if part)
+    document = document_label(chunk.title, chunk.doc_number) or chunk.source
+    return " · ".join(part for part in (document, chunk.section, page) if part)

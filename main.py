@@ -40,7 +40,7 @@ def _ingest(paths: list[Path]) -> None:
         except UnsupportedDocumentError as e:
             console.print(f"[red]rejected:[/] {e}")
             continue
-        console.print(f"[green]indexed[/] {record.source} → {record.doc_id} ({record.n_chunks} chunks)")
+        console.print(f"[green]indexed[/] {record.source} → {record.version_id} ({record.n_chunks} chunks)")
 
 
 def _ask(question: str) -> None:

@@ -50,3 +50,14 @@ def test_a_collection_built_for_another_configuration_is_refused(client, built, 
 
     with pytest.raises(CollectionMismatchError, match="VTAGENT_COLLECTION"):
         VectorStore(client, "c", sparse_idf=configured).search(EMBEDDER.embed_query("q"), 5)
+
+
+@pytest.mark.parametrize("headers", [True, False])
+def test_a_collection_built_with_other_contextual_headers_is_refused(client, headers):
+    chunk = Chunk("00000000-0000-0000-0000-000000000001", "v", "law.pdf", 1, 0, "Điều 1. X",
+                  header="[Luật X › Điều 1. X]" if headers else "")
+    VectorStore(client, "c", contextual_headers=headers).upsert([chunk], EMBEDDER.embed_documents(["Điều 1. X"]))
+
+    assert VectorStore(client, "c", contextual_headers=headers).search(EMBEDDER.embed_query("q"), 1)
+    with pytest.raises(CollectionMismatchError, match="contextual headers"):
+        VectorStore(client, "c", contextual_headers=not headers).search(EMBEDDER.embed_query("q"), 1)

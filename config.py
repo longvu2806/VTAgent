@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # Chunking (SAD Table 6.5): "fixed" = R0, windows of chunk_size tokens per page;
     # "structured" = R1, parent–child chunks along Điều / Khoản / Điểm (SAD 6.2)
     chunking: Literal["fixed", "structured"] = "fixed"
+    contextual_headers: bool = False  # R2: chunks embedded with document title and section (needs its own collection)
     chunk_size: int = 400  # tokens (fixed)
     chunk_overlap: int = 50  # tokens (fixed)
     child_min_tokens: int = 80  # structured: smaller children merge with the next (SAD Table 6.3)

@@ -41,3 +41,12 @@ def test_comma_separated_labels():
 
 def test_refusal_has_no_citations():
     assert extract_citations(NOT_FOUND, SOURCES) == []
+
+
+def test_a_source_with_document_metadata_is_named_by_title_and_number():
+    chunk = Chunk("id1", "v", "Luat-24.docx", None, 0, "1. Luật này có hiệu lực.", "Điều 2. Điều khoản thi hành",
+                  title="Luật đầu tư", doc_number="24/2026/QH16")
+
+    (_, _), (_, human) = build_messages("Q?", [RetrievedChunk(chunk, 1.0)])
+
+    assert "[S1] Luật đầu tư (24/2026/QH16) · Điều 2. Điều khoản thi hành\n1. Luật này" in human

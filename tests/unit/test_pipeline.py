@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk
 from qdrant_client import QdrantClient
 
-from core.chunking import split_pages_fixed, split_structured
+from core.chunking import context_header, split_pages_fixed, split_structured
 from core.context import assemble
 from core.ingestion import Ingestor
 from core.models import Chunk, RetrievedChunk
@@ -89,7 +89,7 @@ def test_ingest_then_ask_maps_citation_to_chunk(tmp_path, word_tokenizer, embedd
 
     assert answer.text == "Phạt 0,05% mỗi ngày [S1]."
     [citation] = answer.citations
-    assert citation.chunk.doc_id == record.doc_id
+    assert citation.chunk.version_id == record.version_id
     assert citation.chunk.source == "hd.docx"
     assert "0,05%" in citation.chunk.text
 
@@ -245,3 +245,33 @@ def test_llm_is_stopped_at_the_time_limit(tmp_path, word_tokenizer, embedder, cl
     assert answer.timed_out
     assert 0 < len(answer.text) < len(looping.content)
     assert answer.citations == [] or answer.citations[0].label == "S1"
+
+
+class RecordingEmbedding(DeterministicFakeEmbedding):
+    texts: list[str] = []
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return super().embed_documents(texts)
+
+
+def test_contextual_headers_are_embedded_while_the_chunk_text_stays_verbatim(tmp_path, word_tokenizer, client):
+    path = tmp_path / "luat.docx"
+    document = docx.Document()
+    for line in ["Luật số: 24/2026/QH16", "LUẬT", "ĐẦU TƯ", "Căn cứ Hiến pháp.",
+                 "Điều 2. Điều khoản thi hành", "1. Luật này có hiệu lực từ ngày 01 tháng 3 năm 2027."]:
+        document.add_paragraph(line)
+    document.save(path)
+    embedder = RecordingEmbedding(size=16)
+    chunker = partial(split_structured, tokenizer=word_tokenizer, child_min=1, child_max=400, parent_max=1200,
+                      fallback_max=300)
+    header = partial(context_header, count_tokens=lambda t: len(t.split()), max_tokens=40)
+    Ingestor(tmp_path / "files", chunker, embedder, VectorStore(client, "r2", contextual_headers=True),
+             DocumentRegistry(tmp_path / "db.sqlite", "r2"), context_header=header).ingest(path)
+
+    [clause] = [h.chunk for h in VectorStore(client, "r2", contextual_headers=True).search(embedder.embed_query("q"), 5)
+                if h.chunk.section.startswith("Điều 2")]
+    assert clause.header == "[Luật đầu tư (24/2026/QH16) › Điều 2. Điều khoản thi hành › Khoản 1]"
+    assert (clause.title, clause.doc_number) == ("Luật đầu tư", "24/2026/QH16")
+    assert clause.text.startswith("Điều 2.") and "[Luật" not in clause.text
+    assert f"{clause.header}\n{clause.text}" in embedder.texts

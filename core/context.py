@@ -34,5 +34,5 @@ def assemble(hits: list[RetrievedChunk], budget: int, count_tokens: Callable[[st
 
     first_hit: dict[str, int] = {}
     for rank, s in enumerate(sources):
-        first_hit.setdefault(s.chunk.doc_id, rank)
-    return sorted(sources, key=lambda s: (first_hit[s.chunk.doc_id], s.chunk.index))
+        first_hit.setdefault(s.chunk.version_id, rank)
+    return sorted(sources, key=lambda s: (first_hit[s.chunk.version_id], s.chunk.index))
