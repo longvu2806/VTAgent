@@ -20,6 +20,21 @@ def test_pdf_keeps_page_numbers_and_skips_blank_pages(tmp_path):
     assert "Third page" in pages[1].text
 
 
+def test_pdf_highlight_tags_are_dropped_and_detached_accents_rejoined(tmp_path, monkeypatch):
+    import pymupdf4llm
+
+    # As pymupdf4llm renders a highlighted article of a Công báo PDF.
+    rendered = "### **<mark>Điều 3. Thị trường liên quan</mark>**\n\n<mark>chức và cá nhân co</mark> ́ <mark>chuyên môn.</mark>"
+    monkeypatch.setattr(pymupdf4llm, "to_markdown",
+                        lambda path, page_chunks: [{"metadata": {"page_number": 1}, "text": rendered}])
+    path = tmp_path / "a.pdf"
+    path.write_bytes(b"%PDF")
+
+    [page] = parse(path)
+
+    assert page.text == "### **Điều 3. Thị trường liên quan**\n\nchức và cá nhân có chuyên môn."
+
+
 def test_docx_keeps_paragraphs_and_tables_in_order(tmp_path):
     path = tmp_path / "a.docx"
     document = docx.Document()
